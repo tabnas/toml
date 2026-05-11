@@ -21,7 +21,7 @@ function unescape(str: string): string {
 
 
 function loadTSV(name: string): { input: string; expected: string; row: number }[] {
-  const specPath = join(__dirname, '..', 'test', 'spec', name + '.tsv')
+  const specPath = join(__dirname, '..', '..', 'test', 'spec', name + '.tsv')
   const lines = readFileSync(specPath, 'utf8').split(/\r?\n/).filter(Boolean)
   return lines.slice(1).map((line, i) => {
     const cols = line.split('\t').map(unescape)
