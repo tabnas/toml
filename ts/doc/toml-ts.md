@@ -1,4 +1,4 @@
-# @jsonic/toml (TypeScript)
+# @tabnas/toml (TypeScript)
 
 This plugin allows the [Jsonic](https://jsonic.senecajs.org) JSON parser
 to support [TOML](https://toml.io) syntax.
@@ -17,14 +17,14 @@ and is split into four purposes:
 ## Install
 
 ```sh
-npm install @jsonic/toml jsonic
+npm install @tabnas/toml @tabnas/jsonic
 ```
 
 ## At a glance
 
 ```js
-const { Jsonic } = require('jsonic')
-const { Toml } = require('@jsonic/toml')
+const { Jsonic } = require('@tabnas/jsonic')
+const { Toml } = require('@tabnas/toml')
 
 const toml = Jsonic.make().use(Toml, {})
 

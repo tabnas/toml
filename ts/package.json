@@ -1,11 +1,11 @@
 {
-  "name": "@jsonic/toml",
+  "name": "@tabnas/toml",
   "version": "0.9.4",
   "description": "This plugin allows the [Jsonic](https://jsonic.senecajs.org) JSON parser to support toml syntax.",
   "main": "dist/toml.js",
   "type": "commonjs",
   "types": "dist/toml.d.ts",
-  "homepage": "https://github.com/jsonicjs/toml",
+  "homepage": "https://github.com/tabnas/toml",
   "keywords": [
     "pattern",
     "matcher",
@@ -16,7 +16,7 @@
   "author": "Richard Rodger (http://richardrodger.com)",
   "repository": {
     "type": "git",
-    "url": "git://github.com/jsonicjs/toml.git"
+    "url": "git://github.com/tabnas/toml.git"
   },
   "scripts": {
     "test": "node --enable-source-maps --test \"dist-test/*.test.js\"",
@@ -43,6 +43,6 @@
     "typescript": "6.0.3"
   },
   "peerDependencies": {
-    "jsonic": ">=2"
+    "@tabnas/jsonic": "file:../../jsonic/ts"
   }
 }

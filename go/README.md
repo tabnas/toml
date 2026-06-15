@@ -1,13 +1,13 @@
 # toml (Go)
 
-A Go port of [@jsonic/toml](https://github.com/jsonicjs/toml), a
-[Jsonic](https://github.com/jsonicjs/jsonic) syntax plugin that parses
+A Go port of [@tabnas/toml](https://github.com/tabnas/toml), a
+[Jsonic](https://github.com/tabnas/jsonic) syntax plugin that parses
 TOML format into Go maps.
 
 ## Install
 
 ```bash
-go get github.com/jsonicjs/toml/go@latest
+go get github.com/tabnas/toml/go@latest
 ```
 
 ## Quick example
@@ -17,7 +17,7 @@ package main
 
 import (
     "fmt"
-    toml "github.com/jsonicjs/toml/go"
+    toml "github.com/tabnas/toml/go"
 )
 
 func main() {

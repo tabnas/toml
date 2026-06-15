@@ -3,7 +3,7 @@
 package toml
 
 import (
-	jsonic "github.com/jsonicjs/jsonic/go"
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // mapToRules converts a parsed grammar `rule` map into the typed

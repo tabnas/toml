@@ -1,11 +1,11 @@
 # How-to guides — TypeScript
 
 Short, task-oriented recipes. Each guide assumes you already have
-`@jsonic/toml` installed and a Jsonic instance created:
+`@tabnas/toml` installed and a Jsonic instance created:
 
 ```js
-const { Jsonic } = require('jsonic')
-const { Toml } = require('@jsonic/toml')
+const { Jsonic } = require('@tabnas/jsonic')
+const { Toml } = require('@tabnas/toml')
 const toml = Jsonic.make().use(Toml, {})
 ```
 
@@ -35,8 +35,8 @@ function loadConfig(src) {
 ## Use ES module syntax
 
 ```js
-import { Jsonic } from 'jsonic'
-import { Toml } from '@jsonic/toml'
+import { Jsonic } from '@tabnas/jsonic'
+import { Toml } from '@tabnas/toml'
 
 const toml = Jsonic.make().use(Toml, {})
 ```

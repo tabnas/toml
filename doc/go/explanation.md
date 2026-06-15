@@ -1,7 +1,7 @@
 # Explanation — Go design
 
 Background and rationale for readers who want to understand how the Go
-port of `@jsonic/toml` is built and where it diverges from the
+port of `@tabnas/toml` is built and where it diverges from the
 TypeScript plugin. For task-focused material, go to the
 [how-to guides](./how-to.md) and [reference](./reference.md).
 
@@ -17,7 +17,7 @@ The Go port preserves that design, so both ports:
   in both.
 
 The Go implementation depends on
-[`github.com/jsonicjs/jsonic/go`](https://github.com/jsonicjs/jsonic),
+[`github.com/tabnas/jsonic/go`](https://github.com/tabnas/jsonic),
 which is the Go port of Jsonic.
 
 ## Single source of truth for the grammar

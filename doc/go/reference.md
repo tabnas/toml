@@ -1,13 +1,13 @@
 # Reference — Go API
 
-Technical description of what `github.com/jsonicjs/toml/go` exposes and
+Technical description of what `github.com/tabnas/toml/go` exposes and
 how TOML values are mapped to Go. For tours and recipes, see the
 [tutorial](./tutorial.md) and [how-to guides](./how-to.md).
 
 ## Package import
 
 ```go
-import toml "github.com/jsonicjs/toml/go"
+import toml "github.com/tabnas/toml/go"
 ```
 
 ## Exported API
@@ -129,4 +129,4 @@ Relevant Go targets (see [`Makefile`](../../Makefile)):
 
 ## Runtime dependency
 
-`github.com/jsonicjs/jsonic/go` (see `go.mod` for the pinned version).
+`github.com/tabnas/jsonic/go` (see `go.mod` for the pinned version).

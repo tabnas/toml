@@ -1,4 +1,4 @@
-# Tutorial — Parsing TOML with @jsonic/toml
+# Tutorial — Parsing TOML with @tabnas/toml
 
 This lesson walks through the minimum you need to parse a real TOML
 document. By the end you will have a Node.js script that turns TOML
@@ -13,7 +13,7 @@ later installed.
 mkdir toml-demo
 cd toml-demo
 npm init -y
-npm install @jsonic/toml jsonic
+npm install @tabnas/toml @tabnas/jsonic
 ```
 
 ## 2. Write your first parser
@@ -21,8 +21,8 @@ npm install @jsonic/toml jsonic
 Create `demo.js`:
 
 ```js
-const { Jsonic } = require('jsonic')
-const { Toml } = require('@jsonic/toml')
+const { Jsonic } = require('@tabnas/jsonic')
+const { Toml } = require('@tabnas/toml')
 
 const toml = Jsonic.make().use(Toml, {})
 

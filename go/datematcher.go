@@ -5,7 +5,7 @@ package toml
 import (
 	"regexp"
 
-	jsonic "github.com/jsonicjs/jsonic/go"
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // Date / time value regexps — the same shapes the grammar's
@@ -33,9 +33,9 @@ func isKeyContext(idTin jsonic.Tin, rule *jsonic.Rule) bool {
 	if rule == nil || rule.Spec == nil {
 		return false
 	}
-	alts := rule.Spec.Open
+	alts := rule.Spec.OpenAlts()
 	if rule.State == jsonic.CLOSE {
-		alts = rule.Spec.Close
+		alts = rule.Spec.CloseAlts()
 	}
 	for _, alt := range alts {
 		for _, pos := range alt.S {

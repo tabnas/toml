@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	jsonic "github.com/jsonicjs/jsonic/go"
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // Subset of TSV spec files that the current Go skeleton passes.

@@ -1,7 +1,7 @@
 # Explanation — TypeScript design
 
 Background and rationale for readers who want to understand why
-`@jsonic/toml` is built the way it is. For task-focused material, go to
+`@tabnas/toml` is built the way it is. For task-focused material, go to
 the [how-to guides](./how-to.md) and [reference](./reference.md).
 
 ## Why a Jsonic plugin?
@@ -18,7 +18,7 @@ Reusing Jsonic gives us:
 - A well-tested lexer and rule engine.
 - A grammar that is declarative (it is itself a Jsonic document), not
   executable JavaScript.
-- Consistency with the other `@jsonic/*` plugins.
+- Consistency with the other `@tabnas/*` plugins.
 
 ## Single source of truth for the grammar
 

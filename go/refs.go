@@ -3,7 +3,7 @@
 package toml
 
 import (
-	jsonic "github.com/jsonicjs/jsonic/go"
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // makeRefs builds the function reference map that the grammar file

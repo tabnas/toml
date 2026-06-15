@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	jsonic "github.com/jsonicjs/jsonic/go"
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // tomlStringMatcher returns a LexMatcher that recognises TOML's basic,

@@ -1,7 +1,7 @@
 # toml (Go)
 
-A Go port of [@jsonic/toml](https://github.com/jsonicjs/toml), a
-[Jsonic](https://github.com/jsonicjs/jsonic) syntax plugin that parses
+A Go port of [@tabnas/toml](https://github.com/tabnas/toml), a
+[Jsonic](https://github.com/tabnas/jsonic) syntax plugin that parses
 TOML into Go `map[string]any` values.
 
 The documentation follows the [Diataxis](https://diataxis.fr) framework
@@ -18,7 +18,7 @@ and is split into four purposes:
 ## Install
 
 ```sh
-go get github.com/jsonicjs/toml/go@latest
+go get github.com/tabnas/toml/go@latest
 ```
 
 ## At a glance
@@ -28,7 +28,7 @@ package main
 
 import (
     "fmt"
-    toml "github.com/jsonicjs/toml/go"
+    toml "github.com/tabnas/toml/go"
 )
 
 func main() {

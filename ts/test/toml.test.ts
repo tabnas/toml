@@ -5,8 +5,8 @@ import Fs from 'node:fs'
 import Path from 'node:path'
 import { deepStrictEqual as equal } from 'node:assert/strict'
 
-import { Jsonic } from 'jsonic'
-// import { Debug } from 'jsonic/debug'
+import { Jsonic } from '@tabnas/jsonic'
+// import { Debug } from '@tabnas/jsonic/debug'
 import { Toml } from '..'
 
 

@@ -1,4 +1,4 @@
-# @jsonic/toml
+# @tabnas/toml
 
 This plugin allows the [Jsonic](https://jsonic.senecajs.org) JSON parser to support toml syntax.
 

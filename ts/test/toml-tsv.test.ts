@@ -5,7 +5,7 @@ import { deepStrictEqual, throws } from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Jsonic } from 'jsonic'
+import { Jsonic } from '@tabnas/jsonic'
 import { Toml } from '..'
 
 

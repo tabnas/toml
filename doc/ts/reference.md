@@ -1,13 +1,13 @@
 # Reference — TypeScript API
 
-Technical description of what `@jsonic/toml` exposes and how TOML values
+Technical description of what `@tabnas/toml` exposes and how TOML values
 are mapped to JavaScript. For tours and recipes, see the
 [tutorial](./tutorial.md) and [how-to guides](./how-to.md).
 
 ## Exports
 
 ```ts
-import { Toml, type TomlOptions } from '@jsonic/toml'
+import { Toml, type TomlOptions } from '@tabnas/toml'
 ```
 
 | Export        | Kind     | Description                                           |

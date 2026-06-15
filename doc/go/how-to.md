@@ -3,7 +3,7 @@
 Short, task-oriented recipes. Each guide assumes:
 
 ```go
-import toml "github.com/jsonicjs/toml/go"
+import toml "github.com/tabnas/toml/go"
 ```
 
 ## Parse a TOML file from disk

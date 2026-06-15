@@ -1,6 +1,6 @@
 // Copyright (c) 2021-2026 Richard Rodger, MIT License
 
-// Package toml is a Go port of @jsonic/toml, a Jsonic plugin that
+// Package toml is a Go port of @tabnas/toml, a Jsonic plugin that
 // parses TOML syntax into Go maps. See README for the currently
 // supported subset.
 package toml
@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"math"
 
-	jsonic "github.com/jsonicjs/jsonic/go"
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 const Version = "0.1.2"
@@ -308,7 +308,7 @@ func injectIDLexGuards(j *jsonic.Jsonic) {
 				S: [][]jsonic.Tin{idSlot},
 				C: never,
 			}
-			rs.Close = append([]*jsonic.AltSpec{dummy}, rs.Close...)
+			rs.PrependClose(dummy)
 		})
 	}
 }

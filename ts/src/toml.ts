@@ -1,7 +1,7 @@
 /* Copyright (c) 2021-2025 Richard Rodger, MIT License */
 
 // Import Jsonic types used by plugin.
-import { Jsonic, Rule, Lex, Plugin, EMPTY } from 'jsonic'
+import { Jsonic, Rule, Lex, Plugin, EMPTY } from '@tabnas/jsonic'
 
 // See defaults below for commentary.
 type TomlOptions = {}

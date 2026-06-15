@@ -13,7 +13,7 @@ later installed.
 mkdir toml-demo
 cd toml-demo
 go mod init example.com/toml-demo
-go get github.com/jsonicjs/toml/go@latest
+go get github.com/tabnas/toml/go@latest
 ```
 
 ## 2. Write your first parser
@@ -25,7 +25,7 @@ package main
 
 import (
     "fmt"
-    toml "github.com/jsonicjs/toml/go"
+    toml "github.com/tabnas/toml/go"
 )
 
 func main() {
