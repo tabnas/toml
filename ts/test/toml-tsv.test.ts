@@ -5,7 +5,8 @@ import { deepStrictEqual, throws } from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Jsonic } from '@tabnas/jsonic'
+import { Tabnas } from '@tabnas/parser'
+import { jsonic } from '@tabnas/jsonic'
 import { Toml } from '..'
 
 
@@ -31,7 +32,7 @@ function loadTSV(name: string): { input: string; expected: string; row: number }
 
 
 function makeToml() {
-  return Jsonic.make().use(Toml)
+  return new Tabnas().use(jsonic).use(Toml)
 }
 
 
@@ -42,19 +43,19 @@ function normalize(v: any): any {
 }
 
 
-function runTSV(name: string, j: ReturnType<typeof Jsonic.make>) {
+function runTSV(name: string, j: ReturnType<typeof makeToml>) {
   const entries = loadTSV(name)
   for (const { input, expected, row } of entries) {
     if (expected.startsWith('ERROR:')) {
       const code = expected.substring('ERROR:'.length)
       throws(
-        () => j(input),
+        () => j.parse(input),
         (err: any) => err.code === code,
         `${name}.tsv row ${row}: expected error ${code} for input=${JSON.stringify(input)}`,
       )
     } else {
       try {
-        deepStrictEqual(normalize(j(input)), JSON.parse(expected))
+        deepStrictEqual(normalize(j.parse(input)), JSON.parse(expected))
       } catch (err: any) {
         err.message = `${name}.tsv row ${row}: input=${JSON.stringify(input)} expected=${expected}\n${err.message}`
         throw err

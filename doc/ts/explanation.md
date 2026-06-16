@@ -37,14 +37,15 @@ will be overwritten the next time `embed-grammar.js` runs. Always edit
 
 At load time the plugin:
 
-1. Parses the embedded grammar using a plain Jsonic instance.
+1. Parses the embedded grammar using a jsonic-grammar engine
+   (`new Tabnas().use(jsonic).parse(grammarText)`).
 2. Attaches a `refs` map of named function references that the grammar
    text points at (e.g. `@isodate-val`, `@make-toml-string-matcher`).
 3. Patches in `NaN` / `Infinity` value definitions that cannot be
    expressed literally in a Jsonic document (they don't survive a
    round-trip through Jsonic parsing).
-4. Calls `jsonic.grammar(grammarDef)` to install everything on the
-   caller's Jsonic instance.
+4. Calls `tn.grammar(grammarDef)` to install everything on the
+   caller's Tabnas instance.
 
 The grammar definition itself describes rules such as `toml`, `table`,
 `pair`, `dive`, `map`, and `val`. Each rule has `open` and/or `close`

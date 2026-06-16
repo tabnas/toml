@@ -1,7 +1,10 @@
 /* Copyright (c) 2021-2025 Richard Rodger, MIT License */
 
-// Import Jsonic types used by plugin.
-import { Jsonic, Rule, Lex, Plugin, EMPTY } from '@tabnas/jsonic'
+// The engine is the tabnas parser; jsonic supplies the relaxed-JSON
+// grammar that the embedded grammar text is authored in. Engine types
+// (Plugin, Rule, Lex) and the EMPTY constant come from @tabnas/parser.
+import { Tabnas, Rule, Lex, Plugin, EMPTY } from '@tabnas/parser'
+import { jsonic } from '@tabnas/jsonic'
 
 // See defaults below for commentary.
 type TomlOptions = {}
@@ -178,7 +181,7 @@ const grammarText = `
 // --- END EMBEDDED toml-grammar.jsonic ---
 
 // Plugin implementation.
-const Toml: Plugin = (jsonic: Jsonic, _options: TomlOptions) => {
+const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
   // Named function references used by the declarative grammar.
   const refs: Record<string, any> = {
     // Options callbacks.
@@ -344,9 +347,9 @@ const Toml: Plugin = (jsonic: Jsonic, _options: TomlOptions) => {
     '@table-end-r': (r: any) => r.n.table_array && 'table',
   }
 
-  // Parse embedded grammar definition using a separate standard Jsonic instance,
-  // then apply options and rules to this plugin's Jsonic.
-  const grammarDef: any = Jsonic.make()(grammarText)
+  // Parse embedded grammar definition using a jsonic-grammar engine,
+  // then apply options and rules to this plugin's tabnas instance.
+  const grammarDef: any = new Tabnas().use(jsonic).parse(grammarText)
   grammarDef.ref = refs
 
   // Patch option values that can't be expressed in the grammar text
@@ -362,14 +365,14 @@ const Toml: Plugin = (jsonic: Jsonic, _options: TomlOptions) => {
     },
   }
 
-  jsonic.grammar(grammarDef)
+  tn.grammar(grammarDef)
 
   // Swap the grammar's regex-based date/time matchers for the
   // context-aware function matchers. The grammar file keeps the regex
   // form so the Go port (which has no equivalent of isKeyContext) still
   // parses it. On the TS side, these overrides let date-shaped bare keys
   // fall through to the #ID token matcher.
-  jsonic.options({
+  tn.options({
     match: {
       value: {
         isodate: { match: refs['@isodate-match'] },
