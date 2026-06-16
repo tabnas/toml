@@ -121,8 +121,8 @@ dive:
                │
 
 Tokens:
-  ID  = matches /[a-zA-Z0-9_-]+/
-  KEY = map key (text, number, string, or value)
-  NR  = number
-  ST  = string
-  VAL = a value (text, number, string, or value)
+  ID  = bare key: letters, digits, _ or -
+  KEY = map key: bare text, number, string, or keyword
+  NR  = number literal (e.g. 42, -1.5, 1e3)
+  ST  = quoted string (e.g. "text")
+  VAL = value: bare text, number, string, or keyword
