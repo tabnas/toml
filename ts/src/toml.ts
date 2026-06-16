@@ -182,6 +182,20 @@ const grammarText = `
 
 // Plugin implementation.
 const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
+  // Human descriptions for TOML tokens, surfaced in railroad diagram legends
+  // (read off the live config by @tabnas/railroad).
+  tn.options({
+    config: {
+      modify: {
+        'toml-tokendesc': (cfg: any) => {
+          cfg.tokenDesc = Object.assign(cfg.tokenDesc || {}, {
+            '#ID': 'bare key: letters, digits, _ or -',
+          })
+        },
+      },
+    },
+  })
+
   // Named function references used by the declarative grammar.
   const refs: Record<string, any> = {
     // Options callbacks.
