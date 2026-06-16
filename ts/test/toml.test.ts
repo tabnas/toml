@@ -5,7 +5,8 @@ import Fs from 'node:fs'
 import Path from 'node:path'
 import { deepStrictEqual as equal } from 'node:assert/strict'
 
-import { Jsonic } from '@tabnas/jsonic'
+import { Tabnas } from '@tabnas/parser'
+import { jsonic } from '@tabnas/jsonic'
 // import { Debug } from '@tabnas/jsonic/debug'
 import { Toml } from '..'
 
@@ -17,7 +18,7 @@ import { Toml } from '..'
 describe('toml', () => {
 
   test('toml-valid', async () => {
-    const toml = Jsonic.make().use(Toml)
+    const toml = new Tabnas().use(jsonic).use(Toml)
 
     let root = __dirname + '/../test/toml-test/tests/valid'
 
@@ -28,7 +29,7 @@ describe('toml', () => {
     for (let test of found) {
       try {
         // console.log('TEST', test.name)
-        test.out = toml(test.toml)
+        test.out = toml.parse(test.toml)
         test.norm = norm(test.out, test.name)
         equal(test.norm, test.json)
         // console.log('PASS', test.name)

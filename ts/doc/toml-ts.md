@@ -17,18 +17,19 @@ and is split into four purposes:
 ## Install
 
 ```sh
-npm install @tabnas/toml @tabnas/jsonic
+npm install @tabnas/toml @tabnas/parser @tabnas/jsonic
 ```
 
 ## At a glance
 
 ```js
-const { Jsonic } = require('@tabnas/jsonic')
+const { Tabnas } = require('@tabnas/parser')
+const { jsonic } = require('@tabnas/jsonic')
 const { Toml } = require('@tabnas/toml')
 
-const toml = Jsonic.make().use(Toml, {})
+const toml = new Tabnas().use(jsonic).use(Toml, {})
 
-const result = toml(`
+const result = toml.parse(`
 title = "TOML Example"
 
 [owner]

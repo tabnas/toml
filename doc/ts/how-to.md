@@ -4,16 +4,17 @@ Short, task-oriented recipes. Each guide assumes you already have
 `@tabnas/toml` installed and a Jsonic instance created:
 
 ```js
-const { Jsonic } = require('@tabnas/jsonic')
+const { Tabnas } = require('@tabnas/parser')
+const { jsonic } = require('@tabnas/jsonic')
 const { Toml } = require('@tabnas/toml')
-const toml = Jsonic.make().use(Toml, {})
+const toml = new Tabnas().use(jsonic).use(Toml, {})
 ```
 
 ## Parse a TOML file from disk
 
 ```js
 const fs = require('node:fs')
-const result = toml(fs.readFileSync('config.toml', 'utf8'))
+const result = toml.parse(fs.readFileSync('config.toml', 'utf8'))
 ```
 
 TOML does not ship with a streaming model — load the whole file, then
@@ -21,24 +22,25 @@ parse.
 
 ## Reuse a parser across many calls
 
-`Jsonic.make().use(Toml, {})` does non-trivial grammar setup. Create
-it once and reuse:
+`new Tabnas().use(jsonic).use(Toml, {})` does non-trivial grammar setup.
+Create it once and reuse:
 
 ```js
-const toml = Jsonic.make().use(Toml, {})
+const toml = new Tabnas().use(jsonic).use(Toml, {})
 
 function loadConfig(src) {
-  return toml(src)
+  return toml.parse(src)
 }
 ```
 
 ## Use ES module syntax
 
 ```js
-import { Jsonic } from '@tabnas/jsonic'
+import { Tabnas } from '@tabnas/parser'
+import { jsonic } from '@tabnas/jsonic'
 import { Toml } from '@tabnas/toml'
 
-const toml = Jsonic.make().use(Toml, {})
+const toml = new Tabnas().use(jsonic).use(Toml, {})
 ```
 
 The package is published as CommonJS with a `.d.ts` typings file, so
@@ -46,17 +48,17 @@ both `require` and `import` work from TypeScript and Node 20+.
 
 ## Handle parse errors
 
-Jsonic throws on invalid input. Wrap calls in `try`/`catch`:
+The parser throws on invalid input. Wrap calls in `try`/`catch`:
 
 ```js
 try {
-  const result = toml(src)
+  const result = toml.parse(src)
 } catch (err) {
   console.error('TOML parse failed:', err.message)
 }
 ```
 
-The thrown error carries the standard Jsonic shape (`code`, `details`,
+The thrown error carries the standard parser shape (`code`, `details`,
 source location).
 
 ## Distinguish TOML dates from plain JavaScript Dates
@@ -65,7 +67,7 @@ Every value produced from a TOML datetime or time literal is a `Date`
 with a `__toml__` tag:
 
 ```js
-const result = toml('a = 1979-05-27T07:32:00Z')
+const result = toml.parse('a = 1979-05-27T07:32:00Z')
 const kind = result.a.__toml__.kind    // 'offset-date-time'
 const src  = result.a.__toml__.src     // '1979-05-27T07:32:00Z'
 ```

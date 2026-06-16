@@ -1,9 +1,11 @@
-const { Jsonic } = require('@tabnas/jsonic')
+const { Tabnas } = require('@tabnas/parser')
+const { jsonic } = require('@tabnas/jsonic')
 const { Debug } = require('@tabnas/jsonic/debug')
 
 const { Toml } = require('..')
 
-const toml = Jsonic.make()
+const toml = new Tabnas()
+  .use(jsonic)
   .use(Debug, {
     trace: true,
   })
@@ -12,7 +14,7 @@ const toml = Jsonic.make()
 // console.dir(toml(`# foo`),{depth:null})
 
 console.dir(
-  toml(`
+  toml.parse(`
 # TOML 1.1 supports Unicode for bare keys.
 
 € = 'Euro'

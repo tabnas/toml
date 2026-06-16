@@ -18,11 +18,11 @@ import { Toml, type TomlOptions } from '@tabnas/toml'
 ## Installation signature
 
 ```ts
-Jsonic.make().use(Toml, options?: TomlOptions)
+new Tabnas().use(jsonic).use(Toml, options?: TomlOptions)
 ```
 
-Returns the Jsonic instance with the TOML grammar applied. Subsequent
-calls on that instance parse TOML source strings.
+Returns the Tabnas instance with the TOML grammar applied. Call
+`.parse(src)` on that instance to parse TOML source strings.
 
 ## Options
 
@@ -114,6 +114,7 @@ See [`Makefile`](../../Makefile). Relevant TypeScript targets:
 | `make clean-ts`   | Remove `dist/` and `dist-test/`.     |
 | `make reset`      | Full rebuild of both TS and Go.      |
 
-## Peer dependency
+## Peer dependencies
 
-`jsonic >= 2` is required at runtime.
+`@tabnas/parser >= 2` (the engine) and `@tabnas/jsonic >= 2` (the
+grammar provider) are required at runtime.

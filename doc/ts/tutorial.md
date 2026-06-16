@@ -13,7 +13,7 @@ later installed.
 mkdir toml-demo
 cd toml-demo
 npm init -y
-npm install @tabnas/toml @tabnas/jsonic
+npm install @tabnas/toml @tabnas/parser @tabnas/jsonic
 ```
 
 ## 2. Write your first parser
@@ -21,10 +21,11 @@ npm install @tabnas/toml @tabnas/jsonic
 Create `demo.js`:
 
 ```js
-const { Jsonic } = require('@tabnas/jsonic')
+const { Tabnas } = require('@tabnas/parser')
+const { jsonic } = require('@tabnas/jsonic')
 const { Toml } = require('@tabnas/toml')
 
-const toml = Jsonic.make().use(Toml, {})
+const toml = new Tabnas().use(jsonic).use(Toml, {})
 
 const src = `
 title = "TOML Example"
@@ -34,7 +35,7 @@ name = "Tom Preston-Werner"
 dob  = 1979-05-27T07:32:00Z
 `
 
-const result = toml(src)
+const result = toml.parse(src)
 console.log(JSON.stringify(result, null, 2))
 ```
 
