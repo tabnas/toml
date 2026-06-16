@@ -7,7 +7,7 @@ import { deepStrictEqual as equal } from 'node:assert/strict'
 
 import { Tabnas } from '@tabnas/parser'
 import { jsonic } from '@tabnas/jsonic'
-// import { Debug } from '@tabnas/jsonic/debug'
+// import { Debug } from '@tabnas/debug'
 import { Toml } from '..'
 
 

@@ -1,6 +1,6 @@
 const { Tabnas } = require('@tabnas/parser')
 const { jsonic } = require('@tabnas/jsonic')
-const { Debug } = require('@tabnas/jsonic/debug')
+const { Debug } = require('@tabnas/debug')
 
 const { Toml } = require('..')
 
