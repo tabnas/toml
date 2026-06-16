@@ -119,3 +119,10 @@ dive:
           └────┬────┘         │
                ├──────────────┘
                │
+
+Tokens:
+  ID  = matches /[a-zA-Z0-9_-]+/
+  KEY = map key (text, number, string, or value)
+  NR  = number
+  ST  = string
+  VAL = a value (text, number, string, or value)
