@@ -17,10 +17,18 @@ import { Toml } from '..'
 
 describe('toml', () => {
 
-  test('toml-valid', async () => {
+  test('toml-valid', async (t) => {
     const toml = new Tabnas().use(jsonic).use(Toml)
 
     let root = __dirname + '/../test/toml-test/tests/valid'
+
+    if (!Fs.existsSync(root)) {
+      // The external BurntSushi toml-test conformance suite is optional
+      // (`npm run install-toml-test`). Skip cleanly when it is not present
+      // (e.g. on CI) instead of crashing on a missing directory.
+      t.skip('toml-test conformance suite not installed')
+      return
+    }
 
     let found = find(root, [])
 
