@@ -1,6 +1,6 @@
 # @tabnas/toml (TypeScript)
 
-This plugin allows the [Jsonic](https://jsonic.senecajs.org) JSON parser
+This plugin allows the [Jsonic](https://github.com/tabnas/jsonic) JSON parser
 to support [TOML](https://toml.io) syntax.
 
 The documentation follows the [Diataxis](https://diataxis.fr) framework
