@@ -1,47 +1,62 @@
-# @tabnas/toml (JSONIC syntax plugin)
+# @tabnas/toml (TypeScript / JavaScript)
 
-This plugin allows the [Jsonic](https://jsonic.senecajs.org) JSON
-parser to support toml syntax.
+A [TOML](https://toml.io) parser, built as a
+[Jsonic](https://github.com/tabnas/jsonic) grammar plugin on the
+[tabnas](https://github.com/tabnas/parser) engine. Parses TOML source
+into plain JavaScript objects.
 
 [![npm version](https://img.shields.io/npm/v/@tabnas/toml.svg)](https://npmjs.com/package/@tabnas/toml)
 [![build](https://github.com/tabnas/toml/actions/workflows/build.yml/badge.svg)](https://github.com/tabnas/toml/actions/workflows/build.yml)
-[![Coverage Status](https://coveralls.io/repos/github/tabnas/toml/badge.svg?branch=main)](https://coveralls.io/github/tabnas/toml?branch=main)
-[![Known Vulnerabilities](https://snyk.io/test/github/tabnas/toml/badge.svg)](https://snyk.io/test/github/tabnas/toml)
-[![DeepScan grade](https://deepscan.io/api/teams/5016/projects/25270/branches/788641/badge/grade.svg)](https://deepscan.io/dashboard#view=project&tid=5016&pid=25270&bid=788641)
-[![Maintainability](https://api.codeclimate.com/v1/badges/10e9bede600896c77ce8/maintainability)](https://codeclimate.com/github/tabnas/toml/maintainability)
 
-| ![Voxgig](https://www.voxgig.com/res/img/vgt01r.png) | This open source module is sponsored and supported by [Voxgig](https://www.voxgig.com). |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------- |
+## Install
 
+```sh
+npm install @tabnas/toml @tabnas/parser @tabnas/jsonic
+```
 
-<!--START:options-->
-## Options
-_None_
-<!--END:options-->
+## Example
 
+```js
+const { Tabnas } = require('@tabnas/parser')
+const { jsonic } = require('@tabnas/jsonic')
+const { Toml } = require('@tabnas/toml')
+
+const toml = new Tabnas().use(jsonic).use(Toml)
+
+toml.parse('a = 1\nb = [2, 3]')   // => { a: 1, b: [2, 3] }
+```
+
+Build the `toml` instance once and reuse it; building it installs the
+whole grammar, while parsing is cheap.
 
 ## Documentation
 
-Documentation is organised around the
-[Diataxis](https://diataxis.fr) framework. Start from the
-per-language landing pages:
+Organised around the [Diataxis](https://diataxis.fr) framework:
 
-- [TypeScript](doc/toml-ts.md) — tutorial, how-to, reference, explanation.
-- [Go](doc/toml-go.md) — tutorial, how-to, reference, explanation.
+- [Tutorial](doc/tutorial.md) — a step-by-step first parse.
+- [How-to guide](doc/guide.md) — task-oriented recipes.
+- [Reference](doc/reference.md) — the API, value mapping, and accepted
+  grammar.
+- [Concepts](doc/concepts.md) — how the plugin works and why.
 
+## Options
 
-# References
-
-https://github.com/huan231/toml-nodejs
+_None._ `TomlOptions` is currently an empty object type.
 
 ## Grammar diagram
 
-The grammar is defined in the top-level `toml-grammar.jsonic` and embedded
-into `src/toml.ts` (and the Go `go/toml.go`) by `embed-grammar.js`.
-
-The installed grammar as a railroad/syntax diagram, generated from the live
-grammar with [`@tabnas/railroad`](https://github.com/tabnas/railroad):
+The installed grammar as a railroad/syntax diagram, generated with
+[`@tabnas/railroad`](https://github.com/tabnas/railroad):
 
 ![toml grammar railroad diagram](doc/grammar.svg)
 
 A vertical ASCII version is in [`doc/grammar.txt`](doc/grammar.txt).
+
+## References
+
+String handling adapted from <https://github.com/huan231/toml-nodejs>
+(MIT).
+
+## License
+
+MIT. Copyright (c) Richard Rodger and other contributors.
