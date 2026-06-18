@@ -1,6 +1,6 @@
 // Copyright (c) 2021-2026 Richard Rodger and other contributors, MIT License
 
-package toml
+package tabnastoml
 
 // TomlTime captures a TOML date / time / datetime value alongside its
 // original source text and kind tag, matching the metadata the

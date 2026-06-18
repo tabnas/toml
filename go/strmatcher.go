@@ -3,7 +3,7 @@
 // Adapted from https://github.com/huan231/toml-nodejs/blob/master/src/tokenizer.ts
 // Copyright (c) 2022 Jan Szybowski, MIT License
 
-package toml
+package tabnastoml
 
 import (
 	"strconv"

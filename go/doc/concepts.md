@@ -112,7 +112,7 @@ but the language shapes differ:
 
 | Aspect            | TypeScript                               | Go                                        |
 | ----------------- | ---------------------------------------- | ----------------------------------------- |
-| Entry point       | `new Tabnas().use(jsonic).use(Toml)` then `.parse(src)` | `toml.Parse(src)` or `toml.MakeJsonic().Parse(src)` |
+| Entry point       | `new Tabnas().use(jsonic).use(Toml)` then `.parse(src)` | `tabnastoml.Parse(src)` or `tabnastoml.MakeJsonic().Parse(src)` |
 | Root value        | plain `object`                           | `map[string]any`                          |
 | Object / table    | plain `object`                           | `map[string]any`                          |
 | Array             | `Array`                                  | `[]any`                                   |

@@ -48,9 +48,9 @@ toml.parse('a = 1\nb = [2, 3]')   // => { a: 1, b: [2, 3] }
 Go:
 
 ```go
-import toml "github.com/tabnas/toml/go"
+import tabnastoml "github.com/tabnas/toml/go"
 
-result, err := toml.Parse(`
+result, err := tabnastoml.Parse(`
 title = "TOML Example"
 [owner]
 name = "Tom"

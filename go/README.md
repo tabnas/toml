@@ -18,11 +18,11 @@ package main
 import (
 	"fmt"
 
-	toml "github.com/tabnas/toml/go"
+	tabnastoml "github.com/tabnas/toml/go"
 )
 
 func main() {
-	result, err := toml.Parse(`
+	result, err := tabnastoml.Parse(`
 title = "TOML Example"
 
 [owner]
@@ -42,9 +42,9 @@ name = "Nail"
 }
 ```
 
-`toml.Parse` returns `(any, error)`; the root is a `map[string]any`.
+`tabnastoml.Parse` returns `(any, error)`; the root is a `map[string]any`.
 Numbers (integers included) come back as `float64`, and datetime/time
-literals as `*toml.TomlTime`.
+literals as `*tabnastoml.TomlTime`.
 
 ## Documentation
 

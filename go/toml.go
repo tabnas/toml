@@ -3,7 +3,7 @@
 // Package toml is a Go port of @tabnas/toml, a Jsonic plugin that
 // parses TOML syntax into Go maps. See README for the currently
 // supported subset.
-package toml
+package tabnastoml
 
 import (
 	"fmt"
