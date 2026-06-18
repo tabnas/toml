@@ -1,6 +1,6 @@
 // Copyright (c) 2021-2026 Richard Rodger, MIT License
 
-package toml
+package tabnastoml
 
 import (
 	jsonic "github.com/tabnas/jsonic/go"

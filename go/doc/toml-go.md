@@ -28,11 +28,11 @@ package main
 
 import (
     "fmt"
-    toml "github.com/tabnas/toml/go"
+    tabnastoml "github.com/tabnas/toml/go"
 )
 
 func main() {
-    result, err := toml.Parse(`
+    result, err := tabnastoml.Parse(`
 title = "TOML Example"
 
 [owner]

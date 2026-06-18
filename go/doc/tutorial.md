@@ -17,15 +17,15 @@ see the [reference](reference.md).
 go get github.com/tabnas/toml/go@latest
 ```
 
-Import it as `toml`:
+Import it as `tabnastoml`:
 
 ```go
-import toml "github.com/tabnas/toml/go"
+import tabnastoml "github.com/tabnas/toml/go"
 ```
 
 ## 2. Parse a string
 
-`toml.Parse` takes a TOML source string and returns `(any, error)`. For a
+`tabnastoml.Parse` takes a TOML source string and returns `(any, error)`. For a
 TOML document the value is always a `map[string]any`:
 
 ```go
@@ -34,11 +34,11 @@ package main
 import (
 	"fmt"
 
-	toml "github.com/tabnas/toml/go"
+	tabnastoml "github.com/tabnas/toml/go"
 )
 
 func main() {
-	result, err := toml.Parse("a = 1")
+	result, err := tabnastoml.Parse("a = 1")
 	if err != nil {
 		panic(err)
 	}
@@ -59,7 +59,7 @@ package main
 import (
 	"fmt"
 
-	toml "github.com/tabnas/toml/go"
+	tabnastoml "github.com/tabnas/toml/go"
 )
 
 func main() {
@@ -69,7 +69,7 @@ title = "TOML Example"
 [owner]
 name = "Tom"
 `
-	result, err := toml.Parse(src)
+	result, err := tabnastoml.Parse(src)
 	if err != nil {
 		panic(err)
 	}
@@ -95,11 +95,11 @@ package main
 import (
 	"fmt"
 
-	toml "github.com/tabnas/toml/go"
+	tabnastoml "github.com/tabnas/toml/go"
 )
 
 func main() {
-	r1, _ := toml.Parse("a = [1, 2, 3]")
+	r1, _ := tabnastoml.Parse("a = [1, 2, 3]")
 	fmt.Println(r1) // map[a:[1 2 3]]
 
 	src := `
@@ -109,7 +109,7 @@ name = "Hammer"
 [[products]]
 name = "Nail"
 `
-	r2, _ := toml.Parse(src)
+	r2, _ := tabnastoml.Parse(src)
 	m := r2.(map[string]any)
 	products := m["products"].([]any)
 	first := products[0].(map[string]any)
@@ -119,7 +119,7 @@ name = "Nail"
 
 ## 5. Look at a TOML date
 
-TOML's date and time literals come back as a `*toml.TomlTime`, which keeps
+TOML's date and time literals come back as a `*tabnastoml.TomlTime`, which keeps
 both a `Kind` tag and the original `Src` text:
 
 ```go
@@ -128,13 +128,13 @@ package main
 import (
 	"fmt"
 
-	toml "github.com/tabnas/toml/go"
+	tabnastoml "github.com/tabnas/toml/go"
 )
 
 func main() {
-	result, _ := toml.Parse("dob = 1979-05-27T07:32:00Z")
+	result, _ := tabnastoml.Parse("dob = 1979-05-27T07:32:00Z")
 	m := result.(map[string]any)
-	dob := m["dob"].(*toml.TomlTime)
+	dob := m["dob"].(*tabnastoml.TomlTime)
 
 	fmt.Println(dob.Kind) // offset-date-time
 	fmt.Println(dob.Src)  // 1979-05-27T07:32:00Z

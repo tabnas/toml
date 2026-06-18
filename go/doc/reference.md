@@ -8,7 +8,7 @@ for the rationale and the TS comparison see [concepts](concepts.md).
 ## Package
 
 ```go
-import toml "github.com/tabnas/toml/go"
+import tabnastoml "github.com/tabnas/toml/go"
 ```
 
 Runtime dependency: `github.com/tabnas/jsonic/go` (the engine + base
@@ -18,7 +18,7 @@ grammar). See `go.mod` for the pinned version.
 
 ```go
 func Parse(src string, opts ...TomlOptions) (any, error)
-func MakeJsonic(opts ...TomlOptions) *jsonic.Jsonic
+func MakeJsonic(opts ...TomlOptions) *tabnasjsonic.Jsonic
 
 const Version = "0.1.2"
 
@@ -33,7 +33,7 @@ type TomlTime struct {
 | Symbol        | Kind     | Purpose                                                |
 | ------------- | -------- | ------------------------------------------------------ |
 | `Parse`       | function | Parse a TOML source string into `any` (a map).         |
-| `MakeJsonic`  | function | Return a configured `*jsonic.Jsonic` for reuse.        |
+| `MakeJsonic`  | function | Return a configured `*tabnasjsonic.Jsonic` for reuse.        |
 | `Version`     | const    | Current module version.                                |
 | `TomlOptions` | struct   | Reserved for future options; currently empty.          |
 | `TomlTime`    | struct   | Tagged TOML datetime / time value.                     |
@@ -55,12 +55,12 @@ fresh instance for that call.
 ## `MakeJsonic`
 
 ```go
-func MakeJsonic(opts ...TomlOptions) *jsonic.Jsonic
+func MakeJsonic(opts ...TomlOptions) *tabnasjsonic.Jsonic
 ```
 
-Builds and returns a `*jsonic.Jsonic` with the TOML grammar applied. Use
+Builds and returns a `*tabnasjsonic.Jsonic` with the TOML grammar applied. Use
 it to keep a parser around across many calls, or to hand to code that
-expects a `*jsonic.Jsonic`. Call `.Parse(src)` on the returned instance.
+expects a `*tabnasjsonic.Jsonic`. Call `.Parse(src)` on the returned instance.
 
 ## `TomlTime`
 
@@ -107,7 +107,7 @@ exists so the API can grow without a breaking signature change.
 as `float64`. There is no `int64`. Assert numeric leaves as `float64`:
 
 ```go
-r, _ := toml.Parse("a = 42")
+r, _ := tabnastoml.Parse("a = 42")
 v := r.(map[string]any)["a"].(float64) // 42
 ```
 
