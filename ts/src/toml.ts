@@ -272,6 +272,19 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       r.node = {}
     },
 
+    // Allocate this map's node up front, mirroring jsonic Go's
+    // @map-bo-jsonic. The new core's @tabnas/json allocates a braced map's
+    // node in the @object$ alt action (on #OB), but TOML prepends its own
+    // map-open alts (e.g. the inline-table `{ s: ['#OB' '#ST #NR #ID'] p:
+    // pair }`) that match first and carry no @object$, so without this the
+    // pushed `pair` would inherit an undefined node and pairval would throw
+    // reading r.node[key]. Allocating here gives every map (table-context
+    // and inline-table alike) a real object; @table-bc copies the child map
+    // into the table node, so a fresh node per map is consistent.
+    '@map-bo': (r: Rule) => {
+      r.node = {}
+    },
+
     '@table-bo': (r: Rule) => {
       r.node = r.parent.node
     },
