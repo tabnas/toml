@@ -8,7 +8,7 @@ test: test-ts test-go
 
 clean: clean-ts clean-go
 
-# Embed toml-grammar.jsonic into src/toml.ts and ../go/toml.go.
+# Embed ../toml-grammar.jsonic into src/toml.ts and ../go/toml.go.
 embed:
 	node embed-grammar.js
 

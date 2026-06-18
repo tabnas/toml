@@ -12,6 +12,15 @@ This repository contains:
 
 See [`ts/README.md`](ts/README.md) for usage.
 
+## Grammar
+
+The grammar is defined once in the top-level
+[`toml-grammar.jsonic`](toml-grammar.jsonic) and embedded into both the
+TypeScript ([`ts/src/toml.ts`](ts/src/toml.ts)) and Go
+([`go/toml.go`](go/toml.go)) implementations by
+[`ts/embed-grammar.js`](ts/embed-grammar.js), so the two runtimes stay in
+sync.
+
 ## Grammar diagram
 
 The grammar as a railroad/syntax diagram, generated from the live grammar
