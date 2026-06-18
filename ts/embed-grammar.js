@@ -6,7 +6,7 @@
 const fs = require('fs')
 const path = require('path')
 
-const grammar = fs.readFileSync(path.join(__dirname, 'toml-grammar.jsonic'), 'utf8')
+const grammar = fs.readFileSync(path.join(__dirname, '..', 'toml-grammar.jsonic'), 'utf8')
 
 const BEGIN = '// --- BEGIN EMBEDDED toml-grammar.jsonic ---'
 const END = '// --- END EMBEDDED toml-grammar.jsonic ---'

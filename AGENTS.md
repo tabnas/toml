@@ -31,7 +31,7 @@ runner does not yet assert error **codes** (see below).
 |---|---|
 | [`ts/`](ts/) | **Canonical** TypeScript implementation — the `@tabnas/toml` package (currently `0.9.4`). Plugin in `src/toml.ts`. Imports the engine as `@tabnas/parser` and the base grammar as `@tabnas/jsonic`. |
 | [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const Version` in `go/toml.go`, currently `0.1.2`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Depends on `github.com/tabnas/jsonic/go` (jsonic re-exports the engine API in Go). |
-| [`ts/toml-grammar.jsonic`](ts/toml-grammar.jsonic) | The grammar, **source of truth for both runtimes**. Embedded verbatim into both source files. |
+| [`toml-grammar.jsonic`](toml-grammar.jsonic) | The grammar (repo top level), **source of truth for both runtimes**. Embedded verbatim into both source files. |
 | [`ts/embed-grammar.js`](ts/embed-grammar.js) | Embeds the grammar into `ts/src/toml.ts` AND `go/toml.go`. |
 | [`test/spec/`](test/spec/) | Shared `.tsv` conformance fixtures (`input → expected` JSON, or `ERROR:<code>`), run by both runtimes. |
 | [`doc/ts/`](doc/ts/), [`doc/go/`](doc/go/) | Per-runtime tutorial → how-to → reference → explanation docs (`tutorial.md`, `how-to.md`, `reference.md`, `explanation.md`). The per-runtime [`ts/doc/`](ts/doc/) / [`go/doc/`](go/doc/) hold only the package overview (`toml-ts.md` / `toml-go.md`) plus the railroad diagram. |
@@ -70,7 +70,7 @@ below).
 **TypeScript is canonical. Go is a port of it.** When you change
 behaviour:
 
-1. Change `ts/src/toml.ts` first (or `ts/toml-grammar.jsonic` for grammar
+1. Change `ts/src/toml.ts` first (or `toml-grammar.jsonic` for grammar
    changes — see the embed section below).
 2. Port the same change to the Go files. The Go port covers the same
    feature surface as TS via native equivalents (string matcher, date/time
@@ -93,7 +93,7 @@ it.
 
 ## The grammar is embedded — never hand-edit the embedded block
 
-`ts/toml-grammar.jsonic` is embedded verbatim into **both**
+`toml-grammar.jsonic` (repo top level) is embedded verbatim into **both**
 `ts/src/toml.ts` and `go/toml.go`, between these markers:
 
 ```
@@ -102,7 +102,7 @@ it.
 // --- END EMBEDDED toml-grammar.jsonic ---
 ```
 
-Edit `ts/toml-grammar.jsonic`, then run the embed step. Never edit the
+Edit `toml-grammar.jsonic`, then run the embed step. Never edit the
 text between the markers by hand — it will be overwritten. (The grammar
 may not contain backticks; `embed-grammar.js` aborts if it does, since
 the Go side uses a raw string.)

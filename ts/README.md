@@ -36,6 +36,9 @@ https://github.com/huan231/toml-nodejs
 
 ## Grammar diagram
 
+The grammar is defined in the top-level `toml-grammar.jsonic` and embedded
+into `src/toml.ts` (and the Go `go/toml.go`) by `embed-grammar.js`.
+
 The installed grammar as a railroad/syntax diagram, generated from the live
 grammar with [`@tabnas/railroad`](https://github.com/tabnas/railroad):
 

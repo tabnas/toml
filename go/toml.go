@@ -8,6 +8,7 @@ package toml
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	jsonic "github.com/tabnas/jsonic/go"
 )
@@ -188,10 +189,28 @@ const grammarText = `
 // TomlOptions holds parser options. Reserved for future use.
 type TomlOptions struct{}
 
+// defaultParser is a lazily-created instance reused by the no-options Parse
+// path, so repeated calls don't rebuild the (expensive) TOML grammar each
+// time — building the grammar dominates a parse (see perf_test.go). Parsing
+// builds a fresh context per call and only reads instance state, so the
+// shared instance is safe for concurrent use. Mirrors @tabnas/json's Parse.
+var (
+	defaultOnce   sync.Once
+	defaultParser *jsonic.Jsonic
+)
+
 // Parse parses a TOML source string and returns the result.
+//
+// The common no-options call reuses a single cached engine+grammar. Callers
+// that pass a TomlOptions get a freshly built instance (options may differ
+// per call), matching the previous behaviour.
 func Parse(src string, opts ...TomlOptions) (any, error) {
-	j := MakeJsonic(opts...)
-	return j.Parse(src)
+	if len(opts) > 0 {
+		j := MakeJsonic(opts...)
+		return j.Parse(src)
+	}
+	defaultOnce.Do(func() { defaultParser = MakeJsonic() })
+	return defaultParser.Parse(src)
 }
 
 // MakeJsonic creates a Jsonic instance configured for TOML parsing.
