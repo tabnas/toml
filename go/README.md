@@ -1,32 +1,32 @@
 # toml (Go)
 
 A Go port of [@tabnas/toml](https://github.com/tabnas/toml), a
-[Jsonic](https://github.com/tabnas/jsonic) syntax plugin that parses
-TOML format into Go maps.
+[Jsonic](https://github.com/tabnas/jsonic) grammar plugin that parses
+[TOML](https://toml.io) into Go `map[string]any` values.
 
 ## Install
 
-```bash
+```sh
 go get github.com/tabnas/toml/go@latest
 ```
 
-## Quick example
+## Example
 
 ```go
 package main
 
 import (
-    "fmt"
-    toml "github.com/tabnas/toml/go"
+	"fmt"
+
+	toml "github.com/tabnas/toml/go"
 )
 
 func main() {
-    result, err := toml.Parse(`
+	result, err := toml.Parse(`
 title = "TOML Example"
 
 [owner]
 name = "Tom"
-dob  = 1979-05-27T07:32:00Z
 
 [[products]]
 name = "Hammer"
@@ -34,35 +34,40 @@ name = "Hammer"
 [[products]]
 name = "Nail"
 `)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println(result)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(result)
+	// map[owner:map[name:Tom] products:[map[name:Hammer] map[name:Nail]] title:TOML Example]
 }
 ```
 
+`toml.Parse` returns `(any, error)`; the root is a `map[string]any`.
+Numbers (integers included) come back as `float64`, and datetime/time
+literals as `*toml.TomlTime`.
+
 ## Documentation
 
-The full documentation lives in [`doc/`](../doc/toml-go.md) and is
-organised around the [Diataxis](https://diataxis.fr) framework:
+Organised around the [Diataxis](https://diataxis.fr) framework:
 
-- [Tutorial](../doc/go/tutorial.md)
-- [How-to guides](../doc/go/how-to.md)
-- [Reference](../doc/go/reference.md)
-- [Explanation](../doc/go/explanation.md)
+- [Tutorial](doc/tutorial.md) — a step-by-step first parse.
+- [How-to guide](doc/guide.md) — task-oriented recipes.
+- [Reference](doc/reference.md) — the exported API, value mapping, and
+  accepted grammar.
+- [Concepts](doc/concepts.md) — how the port works, including a
+  "Differences from the TS version" section.
 
 ## Features
 
-- Key-value pairs, integers (decimal / `0x` / `0o` / `0b` with `_`
-  separators), floats (including `nan`/`inf` with `+/-`), booleans
-- Basic and literal strings, triple-quoted multi-line strings, standard
-  escape sequences (`\n`, `\t`, `é`, `\U0001F600`, `\xHH`,
-  line-ending backslash)
-- Arrays, inline tables, tables, nested tables, array-of-tables
-- Dotted and quoted keys
-- Line comments with `#`
-- Datetimes and times returned as `*TomlTime` (kind tag + original
-  source)
+- Key-value pairs; integers (decimal / `0x` / `0o` / `0b` with `_`
+  separators); floats (including `nan` / `inf` with `+`/`-`); booleans.
+- Basic, literal, and triple-quoted multi-line strings with the standard
+  escape set (`\n`, `\t`, `\xHH`, `\uXXXX`, `\UXXXXXXXX`, line-ending
+  backslash).
+- Arrays, inline tables, tables, nested tables, array-of-tables.
+- Dotted and quoted keys.
+- `#` line comments.
+- Datetimes and times as `*TomlTime` (kind tag + original source).
 
 ## License
 
