@@ -8,7 +8,7 @@ the [how-to guides](./how-to.md) and [reference](./reference.md).
 
 TOML is a configuration syntax with overlapping structure to JSON:
 objects (tables), arrays, scalars. Rather than write a standalone
-parser, this plugin reuses [Jsonic](https://jsonic.senecajs.org)'s
+parser, this plugin reuses [Tabnas](https://github.com/tabnas/jsonic)'s
 declarative grammar engine and adds the handful of rules that make TOML
 TOML: sectioned tables, dotted keys, array-of-tables, datetime literals,
 and a few string escapes.
