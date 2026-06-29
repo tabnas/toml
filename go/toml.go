@@ -8,6 +8,7 @@ package tabnastoml
 import (
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 
 	jsonic "github.com/tabnas/jsonic/go"
@@ -184,6 +185,7 @@ const grammarText = `
   }
 }
 `
+
 // --- END EMBEDDED toml-grammar.jsonic ---
 
 // TomlOptions holds parser options. Reserved for future use.
@@ -205,6 +207,9 @@ var (
 // that pass a TomlOptions get a freshly built instance (options may differ
 // per call), matching the previous behaviour.
 func Parse(src string, opts ...TomlOptions) (any, error) {
+	// A TOML document may begin with a UTF-8 BOM (U+FEFF); the spec says to
+	// ignore it. The lexer has no BOM rule, so strip a single leading one here.
+	src = strings.TrimPrefix(src, "\uFEFF")
 	if len(opts) > 0 {
 		j := MakeJsonic(opts...)
 		return j.Parse(src)

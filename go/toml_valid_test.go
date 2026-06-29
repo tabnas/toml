@@ -136,6 +136,11 @@ func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
 		"spec-1.1.0/common-23",
 		"inline-table/spaces",
 		"float/zero",
+		// Every leaf in these fixtures is a float; an integer-valued
+		// exponent (3e2, 3E2) parses to a plain float64 we can't otherwise
+		// distinguish from an integer, so route them through goFloatString.
+		"float/exponent",
+		"float/exponent-upper",
 	} {
 		if strings.HasSuffix(name, suffix) {
 			allFloat = true
