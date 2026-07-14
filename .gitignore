@@ -33,4 +33,5 @@ dist-test
 *.tsbuildinfo
 
 test/toml-test
+ts/test/toml-test/
 
