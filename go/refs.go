@@ -51,8 +51,9 @@ func makeRefs() map[jsonic.FuncRef]any {
 			// handler that receives `next` as its third arg.
 			next := r.Next
 			if next != nil && next != jsonic.NoRule {
-				next.N["table_dive"] = 0
-				next.N["table_array"] = 0
+				n := next.EnsureN()
+				n["table_dive"] = 0
+				n["table_array"] = 0
 			}
 		}),
 
@@ -75,6 +76,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// --- Alt actions ---
 
 		"@table-dive-start": jsonic.AltAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+			r.EnsureU()
 			key := tokenString(r.O0)
 			parent, ok := r.Parent.Node.(map[string]any)
 			if !ok {
@@ -118,6 +120,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		}),
 
 		"@table-dive-mid": jsonic.AltAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+			r.EnsureU()
 			key := tokenString(r.O0)
 			if _, ok := r.Prev.Node.([]any); ok {
 				// Extract array from its actual home in the parent map so
@@ -178,6 +181,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		}),
 
 		"@table-key-cs-head": jsonic.AltAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+			r.EnsureU()
 			key := tokenString(r.O0)
 			parent, ok := r.Parent.Node.(map[string]any)
 			if !ok {
@@ -208,6 +212,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		}),
 
 		"@table-key-cs-tail": jsonic.AltAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+			r.EnsureU()
 			key := tokenString(r.O0)
 			if _, ok := r.Prev.Node.([]any); ok {
 				arrParent, _ := r.Prev.U["arr_parent"].(map[string]any)
@@ -279,7 +284,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 
 		"@pair-key-set": jsonic.AltAction(func(r *jsonic.Rule, _ *jsonic.Context) {
 			if r.O0 != nil && r.O0 != jsonic.NoToken {
-				r.U["key"] = r.O0.Val
+				r.EnsureU()["key"] = r.O0.Val
 			}
 		}),
 

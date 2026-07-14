@@ -236,6 +236,15 @@ func formatNumber(v float64, name string, allFloat bool, negZero bool) any {
 
 	// Integer-looking → integer by default (TS does the same). Exponent
 	// tests stash their values as ".0"-suffixed floats.
+	//
+	// TS forms the integer string with `'' + v`, and in JS `'' + (-0)`
+	// is "0" — negative zero collapses to "0" in the integer branch
+	// (float/zero is handled above where -0 is deliberately preserved).
+	// Go's FormatFloat keeps the sign ("-0"), so normalise it away here
+	// to match TS norm().
+	if v == 0 {
+		v = 0
+	}
 	asInt := "" + strconv.FormatFloat(v, 'f', -1, 64)
 	if intishRe.MatchString(asInt) {
 		if strings.HasSuffix(name, "exponent") {
