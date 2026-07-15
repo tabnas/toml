@@ -14,7 +14,7 @@ import (
 	jsonic "github.com/tabnas/jsonic/go"
 )
 
-const Version = "0.2.1"
+const Version = "0.2.2"
 
 // --- BEGIN EMBEDDED toml-grammar.jsonic ---
 const grammarText = `
@@ -185,7 +185,6 @@ const grammarText = `
   }
 }
 `
-
 // --- END EMBEDDED toml-grammar.jsonic ---
 
 // TomlOptions holds parser options. Reserved for future use.
