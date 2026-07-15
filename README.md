@@ -1,5 +1,12 @@
 # @tabnas/toml
 
+<!-- tabnas-badges -->
+[![npm](https://tabnas.github.io/status/badges/toml-npm.svg)](https://www.npmjs.com/package/@tabnas/toml)
+[![CI](https://github.com/tabnas/toml/actions/workflows/ci.yml/badge.svg)](https://github.com/tabnas/toml/actions/workflows/ci.yml)
+[![go](https://tabnas.github.io/status/badges/toml-go.svg)](https://pkg.go.dev/github.com/tabnas/toml/go)
+[![tabnas standard](https://tabnas.github.io/status/badges/toml-standard.svg)](https://tabnas.github.io/status/)
+<!-- /tabnas-badges -->
+
 A [TOML](https://toml.io) parser built as a grammar plugin on the
 [tabnas](https://github.com/tabnas/parser) engine and the
 [jsonic](https://github.com/tabnas/jsonic) relaxed-JSON grammar. One
