@@ -185,6 +185,7 @@ const grammarText = `
   }
 }
 `
+
 // --- END EMBEDDED toml-grammar.jsonic ---
 
 // TomlOptions holds parser options. Reserved for future use.
@@ -232,7 +233,13 @@ func apply(j *jsonic.Jsonic) error {
 	if err != nil {
 		return fmt.Errorf("parse grammar: %w", err)
 	}
-	gsMap, ok := parsed.(map[string]any)
+	// A plain Jsonic parse now yields an insertion-ordered *OrderedMap for
+	// objects (parity with the TS engine). The grammar-loading code below
+	// only needs value access, not key order, so flatten the whole tree to
+	// plain map[string]any once here; every downstream map[string]any
+	// assertion then works unchanged. Rule alt arrays stay []any and keep
+	// their (order-significant) element order.
+	gsMap, ok := toPlainMap(parsed)
 	if !ok {
 		return fmt.Errorf("grammar is not a map")
 	}
@@ -288,6 +295,41 @@ func apply(j *jsonic.Jsonic) error {
 	registerDateMatchers(j)
 
 	return nil
+}
+
+// toPlainMap recursively converts a Jsonic parse result into plain Go
+// containers, turning any *jsonic.OrderedMap (the engine's insertion-ordered
+// object node) into a map[string]any and walking nested maps and slices. It
+// is used only for the (order-insensitive) grammar-loading path. The bool
+// reports whether the top-level value was an object.
+func toPlainMap(v any) (map[string]any, bool) {
+	m, ok := toPlainValue(v).(map[string]any)
+	return m, ok
+}
+
+func toPlainValue(v any) any {
+	switch x := v.(type) {
+	case *jsonic.OrderedMap:
+		out := make(map[string]any, len(x.Keys))
+		for _, k := range x.Keys {
+			out[k] = toPlainValue(x.Vals[k])
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, val := range x {
+			out[k] = toPlainValue(val)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = toPlainValue(e)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func registerFixedTokens(j *jsonic.Jsonic, gsMap map[string]any) {
