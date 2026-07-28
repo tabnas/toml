@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // TestTomlValid runs the BurntSushi/toml-test "valid" suite against the
@@ -151,6 +153,11 @@ func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
 	var walk func(v any, key string) any
 	walk = func(v any, key string) any {
 		switch x := v.(type) {
+		case *jsonic.OrderedMap:
+			// Parsed objects are insertion-ordered OrderedMaps; flatten to a
+			// plain map and reuse the map[string]any path (the comparison is
+			// order-agnostic via deepEqual, so dropping order here is fine).
+			return walk(x.Vals, key)
 		case map[string]any:
 			out := make(map[string]any, len(x))
 			for k, vv := range x {

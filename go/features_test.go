@@ -24,7 +24,7 @@ func TestSpecialFloats(t *testing.T) {
 			t.Errorf("parse %q: %v", input, err)
 			continue
 		}
-		m := res.(map[string]any)
+		m := resultMap(res)
 		if !check(m["a"]) {
 			t.Errorf("parse %q: got a=%v (%T)", input, m["a"], m["a"])
 		}
@@ -33,9 +33,9 @@ func TestSpecialFloats(t *testing.T) {
 
 func TestTripleQuoted(t *testing.T) {
 	cases := map[string]string{
-		`a = """hello"""`:        "hello",
-		`a = """"hello""""`:      `"hello"`,
-		`a = '''hello'''`:        "hello",
+		`a = """hello"""`:          "hello",
+		`a = """"hello""""`:        `"hello"`,
+		`a = '''hello'''`:          "hello",
 		`a = """a` + "\n" + `b"""`: "a\nb",
 	}
 	for input, want := range cases {
@@ -44,7 +44,7 @@ func TestTripleQuoted(t *testing.T) {
 			t.Errorf("parse %q: %v", input, err)
 			continue
 		}
-		m := res.(map[string]any)
+		m := resultMap(res)
 		if s, ok := m["a"].(string); !ok || s != want {
 			t.Errorf("parse %q: want %q got %v (%T)", input, want, m["a"], m["a"])
 		}
@@ -64,7 +64,7 @@ func TestDatetime(t *testing.T) {
 			t.Errorf("parse %q: %v", input, err)
 			continue
 		}
-		m := res.(map[string]any)
+		m := resultMap(res)
 		dt, ok := m["a"].(*TomlTime)
 		if !ok {
 			t.Errorf("parse %q: got a=%v (%T), want *TomlTime", input, m["a"], m["a"])

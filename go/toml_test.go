@@ -12,8 +12,8 @@ func TestParseHappy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
-	m, ok := result.(map[string]any)
-	if !ok {
+	m := resultMap(result)
+	if m == nil {
 		t.Fatalf("expected map, got %T: %v", result, result)
 	}
 	if !reflect.DeepEqual(m["a"], float64(1)) && !reflect.DeepEqual(m["a"], 1) {
@@ -26,8 +26,8 @@ func TestParseEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
-	m, ok := result.(map[string]any)
-	if !ok {
+	m := resultMap(result)
+	if m == nil {
 		t.Fatalf("expected map, got %T: %v", result, result)
 	}
 	if len(m) != 0 {

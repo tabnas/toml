@@ -70,6 +70,10 @@ func normalizeNumbers(v any) any {
 		return float64(val)
 	case int64:
 		return float64(val)
+	case *jsonic.OrderedMap:
+		// Parsed objects are insertion-ordered OrderedMaps; flatten to a
+		// plain map (the reflect.DeepEqual comparison here is order-agnostic).
+		return normalizeNumbers(val.Vals)
 	case map[string]any:
 		out := make(map[string]any, len(val))
 		for k, vv := range val {
