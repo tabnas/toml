@@ -14,7 +14,7 @@ import (
 	jsonic "github.com/tabnas/jsonic/go"
 )
 
-const Version = "0.4.0"
+const Version = "0.4.1"
 
 // --- BEGIN EMBEDDED toml-grammar.jsonic ---
 const grammarText = `
