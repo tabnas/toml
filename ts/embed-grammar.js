@@ -39,7 +39,10 @@ if (grammar.includes('`')) {
   console.error('Error: grammar file contains backticks, cannot embed in Go raw string')
   process.exit(1)
 }
+// The trailing newline leaves a blank line before END, which keeps the
+// result gofmt-clean (gofmt wants a blank line between the const
+// declaration and the trailing comment).
 embed(
   path.join(__dirname, '..', 'go', 'toml.go'),
-  'const grammarText = `\n' + grammar + '`'
+  'const grammarText = `\n' + grammar + '`\n'
 )
