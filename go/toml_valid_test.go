@@ -2,11 +2,48 @@
 
 package tabnastoml
 
+// BurntSushi/toml-test conformance harness (Go side).
+//
+//	upstream: https://github.com/BurntSushi/toml-test
+//	pinned:   9eef1b959e0449d41a31d4e4e0a839faee534b36
+//
+// The corpus is NOT committed (project rule: no vendored third-party
+// test corpora). It is fetched by ../scripts/fetch-toml-test.sh into the
+// gitignored ../ts/test/toml-test/. These tests invoke that script when
+// the corpus is missing and FAIL LOUDLY if it still is not there.
+//
+// THIS SUITE MUST NEVER SKIP. It previously did — twice over:
+//   - it looked for the corpus at ../test/toml-test, a path that has
+//     never existed (the checkout lives at ../ts/test/toml-test), so
+//     TestTomlValid t.Skipf'd on every run, everywhere, forever; and
+//   - the invalid/ half of the suite was never loaded at all.
+//
+// Both halves are now asserted:
+//
+//	valid/   — must parse AND produce the correct VALUE
+//	invalid/ — must be REJECTED with an error
+//
+// WHICH TOML VERSION IS JUDGED. README.md claims "A TOML parser" and
+// links to https://toml.io, whose released specification is v1.0.0
+// (v1.1.0 is unreleased). The ASSERTED corpus is therefore the suite's
+// own tests/files-toml-1.0.0 manifest. The v1.1.0 and whole-corpus
+// numbers are still measured and printed by TestTomlVersionReport so
+// nothing is concealed.
+//
+// NO NAME-KEYED FIXUPS. The previous normaliser rewrote parsed values
+// based on the FIXTURE NAME (an allFloat allow-list, a saturating int64
+// hack for integer/long, a 3.0e14 case for float/underscore, a
+// ten = 1e3 patch) and even re-read the fixture SOURCE to recover the
+// sign of -0. Those made failing fixtures pass. They are gone. The only
+// number rule now is the one an ordinary consumer must use:
+// integer-looking -> integer, otherwise float.
+
 import (
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -17,193 +54,173 @@ import (
 	jsonic "github.com/tabnas/jsonic/go"
 )
 
-// TestTomlValid runs the BurntSushi/toml-test "valid" suite against the
-// Go parser and compares against the fixture JSON, mirroring the
-// TypeScript `toml-valid` test. Skipped if test/toml-test is not
-// installed (run `npm run install-toml-test`).
-func TestTomlValid(t *testing.T) {
-	root := filepath.Join("..", "test", "toml-test", "tests", "valid")
-	if _, err := os.Stat(root); os.IsNotExist(err) {
-		t.Skipf("toml-test fixtures not installed at %s — run `npm run install-toml-test`", root)
+const (
+	suiteURL = "https://github.com/BurntSushi/toml-test"
+	suitePin = "9eef1b959e0449d41a31d4e4e0a839faee534b36"
+)
+
+// suiteRoot is the toml-test checkout, relative to go/.
+var suiteRoot = filepath.Join("..", "ts", "test", "toml-test")
+
+var fetchScript = filepath.Join("..", "scripts", "fetch-toml-test.sh")
+
+// ensureCorpus guarantees the conformance corpus is on disk. It never
+// skips: if the corpus cannot be obtained the test FAILS, because a
+// conformance test that silently does not run reports a green tick that
+// is a lie.
+func ensureCorpus(t *testing.T) string {
+	t.Helper()
+
+	present := func() bool {
+		for _, half := range []string{"valid", "invalid"} {
+			if _, err := os.Stat(filepath.Join(suiteRoot, "tests", half)); err != nil {
+				return false
+			}
+		}
+		return true
 	}
 
-	type fixture struct {
-		name string // test path stem (parent/…/base)
-		toml string
-		json []byte
+	if present() {
+		return suiteRoot
 	}
 
-	var fixtures []fixture
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	cmd := exec.Command("bash", fetchScript)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf(
+			"BurntSushi/toml-test conformance corpus is MISSING and could not be fetched.\n"+
+				"  suite:  %s @ %s\n"+
+				"  expect: %s\n"+
+				"  fix:    bash %s\n"+
+				"This test deliberately FAILS rather than skipping.\n"+
+				"  cause:  %v",
+			suiteURL, suitePin, suiteRoot, fetchScript, err)
+	}
+
+	if !present() {
+		t.Fatalf("toml-test corpus still absent after running %s (expected %s/tests/{valid,invalid})",
+			fetchScript, suiteRoot)
+	}
+
+	return suiteRoot
+}
+
+// versionManifest reads the suite's own per-version file list.
+func versionManifest(t *testing.T, root, version string) map[string]bool {
+	t.Helper()
+	path := filepath.Join(root, "tests", "files-toml-"+version)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("toml-test version manifest missing: %s: %v", path, err)
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasSuffix(line, ".toml") {
+			out[line] = true
+		}
+	}
+	return out
+}
+
+type conformanceFixture struct {
+	rel  string // e.g. "valid/float/zero.toml"
+	toml string
+	json []byte
+}
+
+func collectFixtures(t *testing.T, root, half string) []conformanceFixture {
+	t.Helper()
+	base := filepath.Join(root, "tests", half)
+
+	var out []conformanceFixture
+	err := filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".toml") {
 			return err
 		}
-		if !strings.HasSuffix(path, ".toml") {
-			return nil
+		rel, rerr := filepath.Rel(base, path)
+		if rerr != nil {
+			return rerr
 		}
-		stem := strings.TrimSuffix(path, ".toml")
-		rel, _ := filepath.Rel(root, stem)
-		rel = filepath.ToSlash(rel)
-		tomlSrc, err := os.ReadFile(path)
-		if err != nil {
-			return err
+		f := conformanceFixture{rel: half + "/" + filepath.ToSlash(rel)}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
 		}
-		jsonSrc, err := os.ReadFile(stem + ".json")
-		if err != nil {
-			return err
+		f.toml = string(src)
+		if half == "valid" {
+			jsonSrc, jerr := os.ReadFile(strings.TrimSuffix(path, ".toml") + ".json")
+			if jerr != nil {
+				return jerr
+			}
+			f.json = jsonSrc
 		}
-		fixtures = append(fixtures, fixture{
-			name: rel,
-			toml: string(tomlSrc),
-			json: jsonSrc,
-		})
+		out = append(out, f)
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walk %s: %v", root, err)
+		t.Fatalf("walk %s: %v", base, err)
 	}
 
-	sort.Slice(fixtures, func(i, j int) bool {
-		return fixtures[i].name < fixtures[j].name
-	})
-
-	var pass, fail int
-	var fails []string
-	for _, f := range fixtures {
-		out, err := Parse(f.toml)
-		if err != nil {
-			fail++
-			fails = append(fails, f.name+"  PARSE: "+firstLine(err.Error()))
-			continue
-		}
-		// Rescue information the Go jsonic number lexer drops: parse
-		// strips negative zero to +0 and loses int-vs-float distinction.
-		// For the float/zero fixture we look at the source to learn
-		// which keys were written with a leading `-`.
-		negZeroKeys := map[string]bool{}
-		if strings.HasSuffix(f.name, "float/zero") {
-			negZeroKeys = findNegativeZeroKeys(f.toml)
-		}
-		norm := normalizeForToml(out, f.name, negZeroKeys)
-
-		var expected any
-		if err := json.Unmarshal(f.json, &expected); err != nil {
-			fail++
-			fails = append(fails, f.name+"  EXPECTED JSON: "+err.Error())
-			continue
-		}
-		expected = canonicalize(expected)
-		got := canonicalize(norm)
-
-		if !deepEqual(got, expected) {
-			fail++
-			gotJSON, _ := json.Marshal(got)
-			wantJSON, _ := json.Marshal(expected)
-			fails = append(fails, fmt.Sprintf("%s\n     got:  %s\n     want: %s",
-				f.name, string(gotJSON), string(wantJSON)))
-			continue
-		}
-		pass++
-	}
-
-	t.Logf("toml-valid: pass=%d fail=%d total=%d", pass, fail, len(fixtures))
-	if fail > 0 {
-		// Print up to 20 failures inline to keep the output readable.
-		show := fails
-		const max = 20
-		if len(show) > max {
-			show = show[:max]
-		}
-		for _, msg := range show {
-			t.Errorf("FAIL %s", msg)
-		}
-		if len(fails) > max {
-			t.Errorf("…and %d more failures", len(fails)-max)
-		}
-	}
+	sort.Slice(out, func(i, j int) bool { return out[i].rel < out[j].rel })
+	return out
 }
 
-// normalizeForToml converts a Parse result into the `{type, value}`
-// shape BurntSushi/toml-test fixtures use (scalars wrapped, containers
-// passed through). The TS port does the same via a JSON.stringify
-// replacer + JSON.parse reviver; here it's a direct recursive walk.
-func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
-	// Tests where every numeric leaf is a float (integer-valued source
-	// like `+1.0` or `1e06` parses to a plain number so we can't
-	// recover the type without a name-based hint, same as TS).
-	allFloat := false
-	for _, suffix := range []string{
-		"float/max-int",
-		"spec-1.0.0/float-0",
-		"spec-1.1.0/common-23",
-		"inline-table/spaces",
-		"float/zero",
-		// Every leaf in these fixtures is a float; an integer-valued
-		// exponent (3e2, 3E2) parses to a plain float64 we can't otherwise
-		// distinguish from an integer, so route them through goFloatString.
-		"float/exponent",
-		"float/exponent-upper",
-	} {
-		if strings.HasSuffix(name, suffix) {
-			allFloat = true
-			break
+func filterManifest(fs []conformanceFixture, manifest map[string]bool) []conformanceFixture {
+	var out []conformanceFixture
+	for _, f := range fs {
+		if manifest[f.rel] {
+			out = append(out, f)
 		}
 	}
-
-	var walk func(v any, key string) any
-	walk = func(v any, key string) any {
-		switch x := v.(type) {
-		case *jsonic.OrderedMap:
-			// Parsed objects are insertion-ordered OrderedMaps; flatten to a
-			// plain map and reuse the map[string]any path (the comparison is
-			// order-agnostic via deepEqual, so dropping order here is fine).
-			return walk(x.Vals, key)
-		case map[string]any:
-			out := make(map[string]any, len(x))
-			for k, vv := range x {
-				out[k] = walk(vv, k)
-			}
-			// Regression-fixup: a TOML table that binds `ten = 1e3` parses
-			// the value as an integer 1000 but the fixture expects a
-			// float. Mirrors the TS "1e3 is not a float dude!" hack.
-			if t, ok := out["ten"].(map[string]any); ok {
-				if t["type"] == "integer" && t["value"] == "1000" {
-					t["type"] = "float"
-					t["value"] = "1000.0"
-				}
-			}
-			return out
-		case []any:
-			out := make([]any, len(x))
-			for i, vv := range x {
-				out[i] = walk(vv, "")
-			}
-			return out
-		case string:
-			return map[string]any{"type": "string", "value": x}
-		case bool:
-			return map[string]any{"type": "bool", "value": strconv.FormatBool(x)}
-		case *TomlTime:
-			return map[string]any{"type": tomlTimeJSONType(x.Kind), "value": normalizeDatetimeValue(x.Src)}
-		case float64:
-			return formatNumber(x, name, allFloat, negZeroKeys[key])
-		case float32:
-			return formatNumber(float64(x), name, allFloat, negZeroKeys[key])
-		case int:
-			return formatNumber(float64(x), name, allFloat, negZeroKeys[key])
-		case int64:
-			return formatNumber(float64(x), name, allFloat, negZeroKeys[key])
-		case nil:
-			return nil
-		}
-		return v
-	}
-	return walk(v, "")
+	return out
 }
 
-// formatNumber reproduces the integer-vs-float decision and Go-style
-// float formatting the TS norm() does for untyped JS numbers.
-func formatNumber(v float64, name string, allFloat bool, negZero bool) any {
+// --- value normalisation -------------------------------------------------
+
+// normalizeForToml converts a Parse result into the {type, value} shape
+// the toml-test fixtures use. Deliberately NAME-BLIND: the fixture name
+// is never consulted.
+func normalizeForToml(v any) any {
+	switch x := v.(type) {
+	case *jsonic.OrderedMap:
+		return normalizeForToml(x.Vals)
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, vv := range x {
+			out[k] = normalizeForToml(vv)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, vv := range x {
+			out[i] = normalizeForToml(vv)
+		}
+		return out
+	case string:
+		return map[string]any{"type": "string", "value": x}
+	case bool:
+		return map[string]any{"type": "bool", "value": strconv.FormatBool(x)}
+	case *TomlTime:
+		return map[string]any{"type": tomlTimeJSONType(x.Kind), "value": canonDatetime(x.Src)}
+	case float64:
+		return formatNumber(x)
+	case float32:
+		return formatNumber(float64(x))
+	case int:
+		return formatNumber(float64(x))
+	case int64:
+		return formatNumber(float64(x))
+	case nil:
+		return nil
+	}
+	return v
+}
+
+// formatNumber applies the same name-blind rule as the TS harness:
+// integer-looking -> integer, otherwise float.
+func formatNumber(v float64) any {
 	if math.IsNaN(v) {
 		return map[string]any{"type": "float", "value": "nan"}
 	}
@@ -214,49 +231,13 @@ func formatNumber(v float64, name string, allFloat bool, negZero bool) any {
 		return map[string]any{"type": "float", "value": "-inf"}
 	}
 
-	if strings.HasSuffix(name, "float/zero") {
-		// Go jsonic's number matcher collapses -0 back to +0 (see
-		// jsonic/parser.go: `if val == 0 { return 0 }`), so the sign is
-		// gone by the time we see this value. findNegativeZeroKeys
-		// rescues it by reading the fixture source.
-		if negZero && v == 0 {
-			return map[string]any{"type": "float", "value": "-0"}
-		}
-		return map[string]any{"type": "float", "value": goFloatString(v)}
-	}
-	if allFloat {
-		return map[string]any{"type": "float", "value": goFloatString(v)}
-	}
-
-	// Saturating int64 boundary hack: fixtures under tests/valid/integer/long
-	// expect the max/min int64 string for large numbers that overflow
-	// float64 precision.
-	if strings.HasSuffix(name, "long") && v > 9e10 {
-		return map[string]any{"type": "integer", "value": "9223372036854775807"}
-	}
-	if strings.HasSuffix(name, "long") && v < -9e10 {
-		return map[string]any{"type": "integer", "value": "-9223372036854775808"}
-	}
-	if strings.HasSuffix(name, "underscore") && v == 300000000000000 {
-		return map[string]any{"type": "float", "value": "3.0e14"}
-	}
-
-	// Integer-looking → integer by default (TS does the same). Exponent
-	// tests stash their values as ".0"-suffixed floats.
-	//
-	// TS forms the integer string with `'' + v`, and in JS `'' + (-0)`
-	// is "0" — negative zero collapses to "0" in the integer branch
-	// (float/zero is handled above where -0 is deliberately preserved).
-	// Go's FormatFloat keeps the sign ("-0"), so normalise it away here
-	// to match TS norm().
+	// TS forms the integer string with `'' + v`, and in JS `'' + (-0)` is
+	// "0". Match that so the two runtimes make the same (lossy) choice.
 	if v == 0 {
 		v = 0
 	}
-	asInt := "" + strconv.FormatFloat(v, 'f', -1, 64)
+	asInt := strconv.FormatFloat(v, 'f', -1, 64)
 	if intishRe.MatchString(asInt) {
-		if strings.HasSuffix(name, "exponent") {
-			return map[string]any{"type": "float", "value": asInt + ".0"}
-		}
 		return map[string]any{"type": "integer", "value": asInt}
 	}
 	return map[string]any{"type": "float", "value": goFloatString(v)}
@@ -264,8 +245,6 @@ func formatNumber(v float64, name string, allFloat bool, negZero bool) any {
 
 // goFloatString formats a float64 the way the TS goFloat() helper does:
 // pick the shorter of decimal vs. scientific (ties go to decimal).
-// Matches BurntSushi's Go %g precision-(-1) output closely enough for
-// the fixture "value" strings — which are themselves Go-emitted.
 func goFloatString(v float64) string {
 	if v == 0 {
 		if math.Signbit(v) {
@@ -274,17 +253,13 @@ func goFloatString(v float64) string {
 		return "0"
 	}
 	dec := strconv.FormatFloat(v, 'f', -1, 64)
-	sci := strconv.FormatFloat(v, 'e', -1, 64)
-	sci = ensureExpSign(sci)
+	sci := ensureExpSign(strconv.FormatFloat(v, 'e', -1, 64))
 	if len(dec) <= len(sci) {
 		return dec
 	}
 	return sci
 }
 
-// ensureExpSign pads "e<num>" to "e+<num>" so exponents always carry a
-// sign. Go's 'e' format already emits "e+06" for positive exponents;
-// this guards against future changes to that behaviour.
 func ensureExpSign(s string) string {
 	i := strings.IndexAny(s, "eE")
 	if i < 0 {
@@ -296,8 +271,6 @@ func ensureExpSign(s string) string {
 	return s[:i+1] + "+" + s[i+1:]
 }
 
-// tomlTimeJSONType maps TomlTime.Kind to the "type" string the
-// toml-test JSON fixtures use.
 func tomlTimeJSONType(kind string) string {
 	switch kind {
 	case "offset-date-time":
@@ -312,56 +285,67 @@ func tomlTimeJSONType(kind string) string {
 	return kind
 }
 
-// normalizeDatetimeValue applies the same textual fixups the TS reviver
-// does when turning a TomlTime.Src back into the fixture value string.
-// `1987-07-05t17:45:56z` → `1987-07-05T17:45:56Z`, `.6Z` → `.600Z`, etc.
-func normalizeDatetimeValue(v string) string {
-	v = strings.ReplaceAll(v, "t", "T")
-	v = strings.ReplaceAll(v, " ", "T")
-	v = strings.ReplaceAll(v, "z", "Z")
-	v = strings.Replace(v, ".6Z", ".600Z", 1)
-	v = strings.Replace(v, ".6+", ".600+", 1)
-	// HH:MM (local-time without seconds) → HH:MM:00
-	if localTimeHMRe.MatchString(v) {
-		v += ":00"
-	}
-	// T HH:MM with trailing Z/±hh:mm → T HH:MM:00 Z/±hh:mm
-	v = datetimeHMTzRe.ReplaceAllString(v, "T${1}:00${2}")
-	// T HH:MM at end with no tz → T HH:MM:00
-	v = datetimeHMEndRe.ReplaceAllString(v, "T${1}:00")
+// canonDatetime canonicalises a TOML datetime string. Applied to BOTH
+// the parsed value and the expected fixture value, so it can only
+// collapse semantically identical spellings (separator case, a space
+// used as the date/time separator, trailing zeros in the fraction, an
+// omitted :SS). It cannot mask a wrong value. Mirrors the TS
+// canonDatetime().
+func canonDatetime(s string) string {
+	v := strings.TrimSpace(s)
+	v = dateSepRe.ReplaceAllString(v, "${1}T")
+	v = trailingZRe.ReplaceAllString(v, "Z")
+	v = hourMinRe.ReplaceAllString(v, "${1}${2}:00")
+	v = fracZerosRe.ReplaceAllStringFunc(v, func(m string) string {
+		d := strings.TrimRight(strings.TrimPrefix(m, "."), "0")
+		if d == "" {
+			return ""
+		}
+		return "." + d
+	})
 	return v
 }
 
 var (
-	intishRe        = regexp.MustCompile(`^-?\d+$`)
-	localTimeHMRe   = regexp.MustCompile(`^\d\d:\d\d$`)
-	datetimeHMTzRe  = regexp.MustCompile(`T(\d\d:\d\d)([-Z])`)
-	datetimeHMEndRe = regexp.MustCompile(`T(\d\d:\d\d)$`)
-
-	// Crude bare-key + explicit-negative-zero matcher used only by the
-	// float/zero fixture recovery: `signed-neg = -0.0`, `-0e0`, etc.
-	// Ignores comments/strings because the fixture is simple.
-	negZeroAssignRe = regexp.MustCompile(
-		`(?m)^\s*([A-Za-z0-9_-]+)\s*=\s*-0(?:\.0+|[eE][+-]?\d+)?\s*(?:#|$)`,
-	)
+	intishRe    = regexp.MustCompile(`^-?\d+$`)
+	dateSepRe   = regexp.MustCompile(`^(\d{4}-\d\d-\d\d)[ tT]`)
+	trailingZRe = regexp.MustCompile(`[zZ]$`)
+	// HH:MM not followed by :SS / fraction / offset -> pad seconds.
+	hourMinRe = regexp.MustCompile(`(T|^)(\d\d:\d\d)($|[.Z+-])`)
+	// Fractional seconds; trailing zeros trimmed (empty fraction dropped).
+	fracZerosRe = regexp.MustCompile(`\.\d+`)
 )
 
-// findNegativeZeroKeys reads a float/zero fixture and returns the set of
-// bare keys whose value was written with a leading `-`. Works around
-// the Go jsonic parser dropping the sign before we can observe it.
-func findNegativeZeroKeys(src string) map[string]bool {
-	out := map[string]bool{}
-	for _, m := range negZeroAssignRe.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = true
+// canonExpected canonicalises the expected fixture tree the same way for
+// datetimes, so the comparison is symmetric.
+func canonExpected(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		if ty, ok := x["type"].(string); ok {
+			if val, ok2 := x["value"].(string); ok2 {
+				if strings.HasPrefix(ty, "datetime") ||
+					strings.HasPrefix(ty, "date-") ||
+					strings.HasPrefix(ty, "time-") {
+					return map[string]any{"type": ty, "value": canonDatetime(val)}
+				}
+				return map[string]any{"type": ty, "value": val}
+			}
+		}
+		out := make(map[string]any, len(x))
+		for k, vv := range x {
+			out[k] = canonExpected(vv)
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, vv := range x {
+			out[i] = canonExpected(vv)
+		}
+		return out
 	}
-	return out
+	return v
 }
 
-// deepEqual compares two canonicalized JSON-like trees. Used in place
-// of reflect.DeepEqual because maps come back from json.Unmarshal with
-// the same element types we emit (map[string]any, []any, string,
-// float64, bool, nil), so a direct recursive compare is clearer and
-// avoids surprises with untyped interface nil vs. typed nil.
 func deepEqual(a, b any) bool {
 	switch av := a.(type) {
 	case map[string]any:
@@ -370,7 +354,8 @@ func deepEqual(a, b any) bool {
 			return false
 		}
 		for k, vv := range av {
-			if !deepEqual(vv, bv[k]) {
+			other, present := bv[k]
+			if !present || !deepEqual(vv, other) {
 				return false
 			}
 		}
@@ -390,27 +375,199 @@ func deepEqual(a, b any) bool {
 	return a == b
 }
 
-// canonicalize walks a JSON-like tree and normalises container types so
-// that values from Parse (map[string]any / []any) and values from
-// json.Unmarshal (same, but via a different path) are byte-identical
-// under deepEqual. Mostly a no-op today; kept as a single hook in case
-// future test fixtures introduce a new container.
-func canonicalize(v any) any {
-	switch x := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		for k, vv := range x {
-			out[k] = canonicalize(vv)
-		}
-		return out
-	case []any:
-		out := make([]any, len(x))
-		for i, vv := range x {
-			out[i] = canonicalize(vv)
-		}
-		return out
+// --- runners -------------------------------------------------------------
+
+type conformanceReport struct {
+	total int
+	pass  int
+	fail  int
+	fails []string
+	// Invalid documents rejected by a PANIC rather than a diagnosed
+	// parse error. They still count as rejected, but a panic is not a
+	// conformant rejection, so the distinction is reported.
+	crashRejects []string
+}
+
+func (r conformanceReport) summary(label string) string {
+	pct := 0.0
+	if r.total > 0 {
+		pct = 100 * float64(r.pass) / float64(r.total)
 	}
-	return v
+	crash := ""
+	if len(r.crashRejects) > 0 {
+		crash = fmt.Sprintf("  (of which %d rejected by INTERNAL PANIC, not a diagnosed parse error)",
+			len(r.crashRejects))
+	}
+	return fmt.Sprintf("%s: %d/%d (%.1f%%)  failures=%d%s",
+		label, r.pass, r.total, pct, r.fail, crash)
+}
+
+// safeParse calls Parse, converting a panic into an error so one bad
+// fixture cannot abort the whole measurement. `panicked` distinguishes
+// an internal crash from a diagnosed parse error.
+func safeParse(src string) (out any, err error, panicked bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			out = nil
+			err = fmt.Errorf("PANIC: %v", rec)
+			panicked = true
+		}
+	}()
+	out, err = Parse(src)
+	return
+}
+
+func runValid(fixtures []conformanceFixture) conformanceReport {
+	r := conformanceReport{total: len(fixtures)}
+	for _, f := range fixtures {
+		out, err, _ := safeParse(f.toml)
+		if err != nil {
+			r.fail++
+			r.fails = append(r.fails, f.rel+"  PARSE ERROR: "+firstLine(err.Error()))
+			continue
+		}
+
+		var expected any
+		if err := json.Unmarshal(f.json, &expected); err != nil {
+			r.fail++
+			r.fails = append(r.fails, f.rel+"  BAD EXPECTED JSON: "+err.Error())
+			continue
+		}
+
+		got := normalizeForToml(out)
+		want := canonExpected(expected)
+
+		if !deepEqual(got, want) {
+			r.fail++
+			gotJSON, _ := json.Marshal(got)
+			wantJSON, _ := json.Marshal(want)
+			r.fails = append(r.fails, fmt.Sprintf("%s  WRONG VALUE\n      got:  %s\n      want: %s",
+				f.rel, string(gotJSON), string(wantJSON)))
+			continue
+		}
+		r.pass++
+	}
+	return r
+}
+
+func runInvalid(fixtures []conformanceFixture) conformanceReport {
+	r := conformanceReport{total: len(fixtures)}
+	for _, f := range fixtures {
+		out, err, panicked := safeParse(f.toml)
+		if err != nil {
+			r.pass++
+			if panicked {
+				r.crashRejects = append(r.crashRejects, f.rel+": "+firstLine(err.Error()))
+			}
+			continue
+		}
+		r.fail++
+		gotJSON, _ := json.Marshal(normalizeForToml(out))
+		r.fails = append(r.fails, fmt.Sprintf("%s  WRONGLY ACCEPTED\n      src:  %q\n      got:  %s",
+			f.rel, f.toml, string(gotJSON)))
+	}
+	return r
+}
+
+// maxFail bounds how many individual failures are printed. Raise with
+// TOML_CONFORMANCE_MAX_FAIL=0 (unlimited) when triaging; the pass/fail
+// counts are always exact.
+func maxFail(def int) int {
+	if raw := os.Getenv("TOML_CONFORMANCE_MAX_FAIL"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+			if n == 0 {
+				return int(^uint(0) >> 1)
+			}
+			return n
+		}
+	}
+	return def
+}
+
+func reportFailures(t *testing.T, label string, r conformanceReport, limit int) {
+	t.Helper()
+	limit = maxFail(limit)
+	t.Logf("%s", r.summary(label))
+	show := r.fails
+	if len(show) > limit {
+		show = show[:limit]
+	}
+	for _, msg := range show {
+		t.Logf("  FAIL %s", msg)
+	}
+	if len(r.fails) > limit {
+		t.Logf("  ...and %d more failures", len(r.fails)-limit)
+	}
+	showCrash := r.crashRejects
+	if len(showCrash) > limit {
+		showCrash = showCrash[:limit]
+	}
+	for _, msg := range showCrash {
+		t.Logf("  CRASH-REJECT %s", msg)
+	}
+	if len(r.crashRejects) > limit {
+		t.Logf("  ...and %d more crash-rejections", len(r.crashRejects)-limit)
+	}
+}
+
+// --- tests ---------------------------------------------------------------
+
+// TestTomlValid: every TOML 1.0.0 valid document must parse to the
+// expected value.
+func TestTomlValid(t *testing.T) {
+	root := ensureCorpus(t)
+	manifest := versionManifest(t, root, "1.0.0")
+	fixtures := filterManifest(collectFixtures(t, root, "valid"), manifest)
+
+	if len(fixtures) == 0 {
+		t.Fatalf("toml-test valid/ corpus for TOML 1.0.0 is empty — corpus is broken")
+	}
+
+	r := runValid(fixtures)
+	reportFailures(t, "toml-valid (TOML 1.0.0)", r, 40)
+
+	if r.fail > 0 {
+		t.Errorf("%d of %d TOML 1.0.0 valid documents did not parse to the expected value (suite %s @ %s)",
+			r.fail, r.total, suiteURL, suitePin)
+	}
+}
+
+// TestTomlInvalid: every TOML 1.0.0 invalid document must be rejected.
+func TestTomlInvalid(t *testing.T) {
+	root := ensureCorpus(t)
+	manifest := versionManifest(t, root, "1.0.0")
+	fixtures := filterManifest(collectFixtures(t, root, "invalid"), manifest)
+
+	if len(fixtures) == 0 {
+		t.Fatalf("toml-test invalid/ corpus for TOML 1.0.0 is empty — corpus is broken")
+	}
+
+	r := runInvalid(fixtures)
+	reportFailures(t, "toml-invalid (TOML 1.0.0)", r, 40)
+
+	if r.fail > 0 {
+		t.Errorf("%d of %d TOML 1.0.0 INVALID documents were wrongly ACCEPTED (suite %s @ %s)",
+			r.fail, r.total, suiteURL, suitePin)
+	}
+}
+
+// TestTomlVersionReport measures the unreleased TOML 1.1.0 draft and the
+// whole corpus. Reported, not asserted: the package does not claim
+// v1.1.0. It exists so the full corpus is never hidden.
+func TestTomlVersionReport(t *testing.T) {
+	root := ensureCorpus(t)
+
+	allValid := collectFixtures(t, root, "valid")
+	allInvalid := collectFixtures(t, root, "invalid")
+
+	m110 := versionManifest(t, root, "1.1.0")
+	t.Logf("--- TOML 1.1.0 draft (reported, NOT asserted: not claimed) ---")
+	t.Logf("  %s", runValid(filterManifest(allValid, m110)).summary("toml-1.1.0-valid"))
+	t.Logf("  %s", runInvalid(filterManifest(allInvalid, m110)).summary("toml-1.1.0-invalid"))
+
+	t.Logf("--- Whole corpus (reported, NOT asserted) ---")
+	t.Logf("  %s", runValid(allValid).summary("all-valid"))
+	t.Logf("  %s", runInvalid(allInvalid).summary("all-invalid"))
 }
 
 func firstLine(s string) string {

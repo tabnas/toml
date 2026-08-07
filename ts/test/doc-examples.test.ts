@@ -186,7 +186,15 @@ describe('doc-examples', () => {
   }
 
   it('found at least one tested example (sanity)', () => {
-    // Not a hard failure if a repo has no `// =>` examples yet.
-    assert.ok(testable >= 0, `tested ${testable} doc example block(s)`)
+    // `testable >= 0` was the previous assertion: a count is always >= 0,
+    // so it could never fail — an assert-nothing test that would have
+    // stayed green if doc-example discovery broke entirely and zero
+    // examples ran. This repo's README documents executable examples, so
+    // require at least one.
+    assert.ok(
+      testable > 0,
+      `no doc example blocks with a \`// =>\` assertion were found in ` +
+      `${files.length} markdown file(s) — doc-example discovery is broken`,
+    )
   })
 })

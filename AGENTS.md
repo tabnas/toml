@@ -193,28 +193,80 @@ the TS-only hooks natively, not by parsing less:
 
 ## The external conformance suite (BurntSushi/toml-test)
 
-Beyond the shared `.tsv` fixtures, both runtimes can run the upstream
-[BurntSushi/toml-test](https://github.com/BurntSushi/toml-test) "valid"
-suite. It is **optional and not checked in** — install it with:
+Beyond the shared `.tsv` fixtures, both runtimes run the upstream
+[BurntSushi/toml-test](https://github.com/BurntSushi/toml-test) corpus,
+pinned at commit `9eef1b959e0449d41a31d4e4e0a839faee534b36`.
+
+**The corpus is never committed.** It is fetched by
+[`scripts/fetch-toml-test.sh`](scripts/fetch-toml-test.sh) into the
+gitignored `ts/test/toml-test/` (a sparse checkout of `tests/` only —
+upstream is itself a Go module and its `go.mod` would otherwise be swept
+into the generated repo-root `go.work`). The script is idempotent and
+pins an exact SHA, so conformance numbers are reproducible.
 
 ```bash
-cd ts && npm run install-toml-test   # git clone/pull into ts/test/toml-test
+./scripts/fetch-toml-test.sh     # or: cd ts && npm run install-toml-test
 ```
 
-Both suites **skip cleanly** when it is absent (the normal state on CI):
+**Neither suite is allowed to skip.** `npm test` runs the fetch via the
+`pretest` hook, and both harnesses re-run it themselves if the corpus is
+still missing; if it cannot be obtained they FAIL with an actionable
+message. A conformance test that quietly does not run is worse than no
+test at all, because the green tick is a lie. Do not reintroduce a
+`t.skip` / `t.Skipf` here.
 
-- TS (`ts/test/toml.test.ts`, the `toml-valid` test): guards
-  `Fs.existsSync(.../test/toml-test/tests/valid)` and calls `t.skip(...)`
-  + `return` when the directory is missing.
-- Go (`go/toml_valid_test.go`, `TestTomlValid`): guards `os.Stat` /
-  `os.IsNotExist` and calls `t.Skipf(...)`.
+**Both halves are asserted:**
 
-Both tests normalise the parse result into the `{type, value}` shape the
-toml-test fixtures use (TS via a `JSON.stringify` replacer + `JSON.parse`
-reviver in `norm()`; Go via the recursive `normalizeForToml` walk), with
-a matching set of name-keyed fixups for cases where int-vs-float or
-`-0`/`inf`/`nan` can't be recovered from a plain JS/Go number. When you
-touch one side's normalisation, mirror it in the other.
+| Half | Assertion |
+|---|---|
+| `valid/` | must parse AND produce the correct VALUE |
+| `invalid/` | must be REJECTED with an error |
+
+- TS: `ts/test/toml.test.ts` — `toml-valid`, `toml-invalid`, plus an
+  informational `toml-1.1.0-report`.
+- Go: `go/toml_valid_test.go` — `TestTomlValid`, `TestTomlInvalid`, plus
+  an informational `TestTomlVersionReport`.
+
+**Which TOML version is judged.** `README.md` claims "A TOML parser" and
+links to <https://toml.io>, whose released spec is **v1.0.0** (v1.1.0 is
+unreleased). The *asserted* corpus is therefore the suite's own
+`tests/files-toml-1.0.0` manifest — 210 valid, 499 invalid documents.
+The v1.1.0 and whole-corpus numbers are still measured and printed, so
+nothing is concealed; they are just not asserted. If the README ever
+claims v1.1.0, move the assertion.
+
+**No name-keyed fixups.** Both normalisers are deliberately BLIND to the
+fixture name. Earlier revisions rewrote parsed values based on which
+fixture was running (an `allFloat` allow-list, a saturating int64 hack
+for `integer/long`, a `3.0e14` case for `float/underscore`, a `ten = 1e3`
+patch, and — on the Go side — `findNegativeZeroKeys`, which re-read the
+fixture *source text* to recover a `-0` sign the parser had lost). Those
+made genuinely failing fixtures pass. The only number rule now is the one
+an ordinary consumer of this API must use: integer-looking → integer,
+otherwise float. Datetimes are canonicalised by a single function applied
+to BOTH sides, so it can only collapse semantically identical spellings.
+**Do not add a fixture-name special case to make a number go up.**
+
+`TOML_CONFORMANCE_MAX_FAIL=0` prints every individual failure (default
+40) in either runtime.
+
+### Known baseline (2026-08, TOML 1.0.0, suite @ 9eef1b9)
+
+Measured, not estimated. Both suites are RED and are meant to be.
+
+| Runtime | valid accepted | invalid rejected |
+|---|---|---|
+| TypeScript | 199/210 (94.8%) | 220/499 (44.1%) |
+| Go | 201/210 (95.7%) | 225/499 (45.1%) |
+
+15 of the TypeScript rejections are internal `TypeError`s, not diagnosed
+parse errors; the harness reports those separately as `CRASH-REJECT`.
+
+The dominant cause is base-grammar leniency inherited from
+`@tabnas/jsonic`: the documented stack (`new Tabnas().use(jsonic).use(Toml)`)
+accepts jsonic's relaxed forms, so e.g. `x = tru`, `x = TRUE`, `x = 1ee2`
+become plain strings; `a = 1 b = 2` (no newline) parses; duplicate keys
+silently overwrite; and newlines inside inline tables are allowed.
 
 ## Build & test
 
@@ -226,8 +278,9 @@ npm run build          # embeds grammar, then tsc --build src test
 npm test               # node --test over dist-test/*.test.js
 ```
 
-`npm test` runs the `.tsv` fixtures (`toml-tsv.test.ts`), the optional
-toml-test conformance suite (`toml.test.ts`, skipped if not installed),
+`npm test` first runs `pretest` (`scripts/fetch-toml-test.sh`), then the
+`.tsv` fixtures (`toml-tsv.test.ts`), the toml-test conformance suite
+(`toml.test.ts` — never skips; currently RED, see the baseline above),
 and the README/doc example harness (`doc-examples.test.ts`, which runs
 fenced `js` blocks containing `// =>` assertions). `npm run test-cov`
 produces `coverage/lcov.info`. There is **no CLI** in this package (no
@@ -237,7 +290,8 @@ Go (from `go/`):
 
 ```bash
 go build ./...
-go test -v ./...       # tsvSubset fixtures + feature/unit tests; toml-test skipped if absent
+go test -v ./...       # tsvSubset fixtures + feature/unit tests + toml-test
+                       # (fetches the corpus itself; never skips)
 ```
 
 The repo-root [`Makefile`](Makefile) (adapted from voxgig/util) wraps
@@ -251,16 +305,33 @@ node_modules symlinks (`admin/scripts/link.sh`); there is no checked-in
 
 ## CI
 
-`.github/workflows/build.yml` has two jobs, neither publishing to npm:
+`.github/workflows/ci.yml` is a thin caller of the org-standard reusable
+workflow `tabnas/.github/.github/workflows/polyglot-ci.yml@main`, with
+`deps: "parser debug json abnf railroad jsonic"`. It has two jobs,
+neither publishing to npm:
 
-- **build** (Ubuntu/Windows/macOS, Node 24): sets
+- **ts** (Ubuntu/Windows/macOS, Node 24): sets
   `git config --global core.autocrlf false` (CRLF corrupts the `.tsv`
-  fixtures), git-clones the tabnas closure
-  (`parser debug json abnf railroad jsonic`) as siblings,
+  fixtures), git-clones the tabnas closure as siblings,
   `npm i && npm run build --if-present` each in topo order, then
-  `npm test` here. The toml-test conformance suite is not installed, so
-  the `toml-valid` test skips.
-- **build-go** (Ubuntu/macOS, Go 1.24): clones the same siblings, mirrors
+  `npm test` here.
+- **go** (Ubuntu/macOS, Go 1.24): clones the same siblings, mirrors
   `admin/scripts/link.sh` by creating `vendor/` symlinks for any
   `../vendor/` replaces and a `go work` over every non-vendor-replaced
   module, then `go build`/`go test -v` here.
+
+**How the conformance corpus reaches CI.** A caller job that uses a
+reusable workflow cannot add its own `steps`, and this repo must not edit
+`tabnas/.github`, so the fetch is wired into the commands CI already
+runs:
+
+- ts job: npm's `pretest` hook runs `scripts/fetch-toml-test.sh` before
+  `npm test`.
+- go job: `TestTomlValid` / `TestTomlInvalid` call the same script
+  themselves via `ensureCorpus`. The go workspace is built from
+  `find . -name go.mod` *before* the fetch, and the sparse checkout has
+  no `go.mod`, so the corpus never enters `go.work`.
+
+Both paths fail loudly if the corpus cannot be obtained. If the reusable
+workflow ever gains a pre-test hook input, prefer an explicit CI step —
+but never make the tests skip instead.
