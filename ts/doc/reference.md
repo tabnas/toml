@@ -17,12 +17,13 @@ Published as `@tabnas/toml`. Runtime peer dependencies:
 ## Exports
 
 ```ts
-import { Toml, type TomlOptions } from '@tabnas/toml'
+import { Toml, VERSION, type TomlOptions } from '@tabnas/toml'
 ```
 
 | Export        | Kind                      | Description                                              |
 | ------------- | ------------------------- | ------------------------------------------------------- |
 | `Toml`        | `Plugin` (from `@tabnas/parser`) | Installs the TOML grammar onto a `Tabnas` instance. |
+| `VERSION`     | `string`                  | This package's version. Always equals `package.json` `"version"` — a test enforces it. |
 | `TomlOptions` | type                      | Plugin options object. Currently `{}` (no options).     |
 
 `Toml.defaults` is `{}`.

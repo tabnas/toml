@@ -35,7 +35,7 @@ clean-go:
 # Publish Go module: make publish-go V=0.1.1
 publish-go: test-go
 	@test -n "$(V)" || (echo "Usage: make publish-go V=x.y.z" && exit 1)
-	perl -i -pe 's/^const Version = ".*"/const Version = "$(V)"/' ../go/toml.go
+	perl -i -pe 's/^const VERSION = ".*"/const VERSION = "$(V)"/' ../go/toml.go
 	git add ../go/toml.go
 	git commit -m "go: v$(V)"
 	git tag go/v$(V)

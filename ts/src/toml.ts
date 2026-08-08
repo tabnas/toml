@@ -730,6 +730,11 @@ const isWhitespace = (char: string) => {
 // Default option values.
 Toml.defaults = {} as TomlOptions
 
-export { Toml }
+// VERSION is this package's version. It MUST equal package.json "version":
+// the release orchestrator rewrites both, and test/version.test.ts fails the
+// build if they drift. Mirrors `const VERSION` in go/toml.go.
+const VERSION = '0.4.3'
+
+export { Toml, VERSION }
 
 export type { TomlOptions }
