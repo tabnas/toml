@@ -168,7 +168,7 @@ func mustJSON(v any) string {
 }
 
 // Ensure our test runner survives the skeleton's known parser.
-var _ = jsonic.Version // keep the import useful
+var _ = jsonic.VERSION // keep the import useful
 
 func TestTSV(t *testing.T) {
 	for _, name := range tsvSubset {

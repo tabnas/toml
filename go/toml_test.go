@@ -36,7 +36,7 @@ func TestParseEmpty(t *testing.T) {
 }
 
 func TestVersion(t *testing.T) {
-	if Version == "" {
-		t.Fatal("Version should be set")
+	if VERSION == "" {
+		t.Fatal("VERSION should be set")
 	}
 }

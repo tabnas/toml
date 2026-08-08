@@ -20,7 +20,7 @@ grammar). See `go.mod` for the pinned version.
 func Parse(src string, opts ...TomlOptions) (any, error)
 func MakeJsonic(opts ...TomlOptions) *tabnasjsonic.Jsonic
 
-const Version = "0.1.2"
+const VERSION = "0.4.3"
 
 type TomlOptions struct{}
 
@@ -34,7 +34,7 @@ type TomlTime struct {
 | ------------- | -------- | ------------------------------------------------------ |
 | `Parse`       | function | Parse a TOML source string into `any` (a map).         |
 | `MakeJsonic`  | function | Return a configured `*tabnasjsonic.Jsonic` for reuse.        |
-| `Version`     | const    | Current module version.                                |
+| `VERSION`     | const    | Current module version; always equals `ts/package.json` `"version"`. |
 | `TomlOptions` | struct   | Reserved for future options; currently empty.          |
 | `TomlTime`    | struct   | Tagged TOML datetime / time value.                     |
 

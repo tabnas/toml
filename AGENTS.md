@@ -30,7 +30,7 @@ runner does not yet assert error **codes** (see below).
 | Path | What it is |
 |---|---|
 | [`ts/`](ts/) | **Canonical** TypeScript implementation — the `@tabnas/toml` package. Plugin in `src/toml.ts`. Imports the engine as `@tabnas/parser` and the base grammar as `@tabnas/jsonic`. |
-| [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const Version` in `go/toml.go`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Depends on `github.com/tabnas/jsonic/go` (jsonic re-exports the engine API in Go). |
+| [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const VERSION` in `go/toml.go`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Depends on `github.com/tabnas/jsonic/go` (jsonic re-exports the engine API in Go). |
 | [`toml-grammar.jsonic`](toml-grammar.jsonic) | The grammar (repo top level), **source of truth for both runtimes**. Embedded verbatim into both source files. |
 | [`ts/embed-grammar.js`](ts/embed-grammar.js) | Embeds the grammar into `ts/src/toml.ts` AND `go/toml.go`. |
 | [`test/spec/`](test/spec/) | Shared `.tsv` conformance fixtures (`input → expected` JSON, or `ERROR:<code>`), run by both runtimes. |
@@ -277,7 +277,7 @@ go test -v ./...       # tsvSubset fixtures + feature/unit tests; toml-test skip
 
 The repo-root [`Makefile`](Makefile) (adapted from voxgig/util) wraps
 both halves: `make build|test|clean` run the TS and Go sides, and
-`make publish-go V=x.y.z` injects `V` into the `const Version` in
+`make publish-go V=x.y.z` injects `V` into the `const VERSION` in
 `go/toml.go`, commits, and tags `go/vX.Y.Z`. `make publish-ts` publishes
 the TS package at its `package.json` version. Local builds resolve the
 unpublished siblings via the repo-set `go.work` + node_modules symlinks
