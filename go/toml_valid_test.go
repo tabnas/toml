@@ -22,9 +22,11 @@ import (
 // TypeScript `toml-valid` test. Skipped if test/toml-test is not
 // installed (run `npm run install-toml-test`).
 func TestTomlValid(t *testing.T) {
-	root := filepath.Join("..", "test", "toml-test", "tests", "valid")
+	// `npm run install-toml-test` clones into ts/test/toml-test (the script
+	// runs from ts/), so from go/ the suite lives under ../ts/test.
+	root := filepath.Join("..", "ts", "test", "toml-test", "tests", "valid")
 	if _, err := os.Stat(root); os.IsNotExist(err) {
-		t.Skipf("toml-test fixtures not installed at %s — run `npm run install-toml-test`", root)
+		t.Skipf("toml-test fixtures not installed at %s — run `npm run install-toml-test` from ts/", root)
 	}
 
 	type fixture struct {
@@ -76,15 +78,7 @@ func TestTomlValid(t *testing.T) {
 			fails = append(fails, f.name+"  PARSE: "+firstLine(err.Error()))
 			continue
 		}
-		// Rescue information the Go jsonic number lexer drops: parse
-		// strips negative zero to +0 and loses int-vs-float distinction.
-		// For the float/zero fixture we look at the source to learn
-		// which keys were written with a leading `-`.
-		negZeroKeys := map[string]bool{}
-		if strings.HasSuffix(f.name, "float/zero") {
-			negZeroKeys = findNegativeZeroKeys(f.toml)
-		}
-		norm := normalizeForToml(out, f.name, negZeroKeys)
+		norm := normalizeForToml(out, f.name)
 
 		var expected any
 		if err := json.Unmarshal(f.json, &expected); err != nil {
@@ -127,7 +121,7 @@ func TestTomlValid(t *testing.T) {
 // shape BurntSushi/toml-test fixtures use (scalars wrapped, containers
 // passed through). The TS port does the same via a JSON.stringify
 // replacer + JSON.parse reviver; here it's a direct recursive walk.
-func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
+func normalizeForToml(v any, name string) any {
 	// Tests where every numeric leaf is a float (integer-valued source
 	// like `+1.0` or `1e06` parses to a plain number so we can't
 	// recover the type without a name-based hint, same as TS).
@@ -150,18 +144,18 @@ func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
 		}
 	}
 
-	var walk func(v any, key string) any
-	walk = func(v any, key string) any {
+	var walk func(v any) any
+	walk = func(v any) any {
 		switch x := v.(type) {
 		case *jsonic.OrderedMap:
 			// Parsed objects are insertion-ordered OrderedMaps; flatten to a
 			// plain map and reuse the map[string]any path (the comparison is
 			// order-agnostic via deepEqual, so dropping order here is fine).
-			return walk(x.Vals, key)
+			return walk(x.Vals)
 		case map[string]any:
 			out := make(map[string]any, len(x))
 			for k, vv := range x {
-				out[k] = walk(vv, k)
+				out[k] = walk(vv)
 			}
 			// Regression-fixup: a TOML table that binds `ten = 1e3` parses
 			// the value as an integer 1000 but the fixture expects a
@@ -176,7 +170,7 @@ func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
 		case []any:
 			out := make([]any, len(x))
 			for i, vv := range x {
-				out[i] = walk(vv, "")
+				out[i] = walk(vv)
 			}
 			return out
 		case string:
@@ -186,24 +180,24 @@ func normalizeForToml(v any, name string, negZeroKeys map[string]bool) any {
 		case *TomlTime:
 			return map[string]any{"type": tomlTimeJSONType(x.Kind), "value": normalizeDatetimeValue(x.Src)}
 		case float64:
-			return formatNumber(x, name, allFloat, negZeroKeys[key])
+			return formatNumber(x, name, allFloat)
 		case float32:
-			return formatNumber(float64(x), name, allFloat, negZeroKeys[key])
+			return formatNumber(float64(x), name, allFloat)
 		case int:
-			return formatNumber(float64(x), name, allFloat, negZeroKeys[key])
+			return formatNumber(float64(x), name, allFloat)
 		case int64:
-			return formatNumber(float64(x), name, allFloat, negZeroKeys[key])
+			return formatNumber(float64(x), name, allFloat)
 		case nil:
 			return nil
 		}
 		return v
 	}
-	return walk(v, "")
+	return walk(v)
 }
 
 // formatNumber reproduces the integer-vs-float decision and Go-style
 // float formatting the TS norm() does for untyped JS numbers.
-func formatNumber(v float64, name string, allFloat bool, negZero bool) any {
+func formatNumber(v float64, name string, allFloat bool) any {
 	if math.IsNaN(v) {
 		return map[string]any{"type": "float", "value": "nan"}
 	}
@@ -215,11 +209,10 @@ func formatNumber(v float64, name string, allFloat bool, negZero bool) any {
 	}
 
 	if strings.HasSuffix(name, "float/zero") {
-		// Go jsonic's number matcher collapses -0 back to +0 (see
-		// jsonic/parser.go: `if val == 0 { return 0 }`), so the sign is
-		// gone by the time we see this value. findNegativeZeroKeys
-		// rescues it by reading the fixture source.
-		if negZero && v == 0 {
+		// The engine preserves negative zero, so the sign is readable
+		// straight off the parsed value -- the Go analogue of the TS
+		// norm()'s `Object.is(v, -0) ? '-0' : ...`.
+		if v == 0 && math.Signbit(v) {
 			return map[string]any{"type": "float", "value": "-0"}
 		}
 		return map[string]any{"type": "float", "value": goFloatString(v)}
@@ -337,25 +330,7 @@ var (
 	localTimeHMRe   = regexp.MustCompile(`^\d\d:\d\d$`)
 	datetimeHMTzRe  = regexp.MustCompile(`T(\d\d:\d\d)([-Z])`)
 	datetimeHMEndRe = regexp.MustCompile(`T(\d\d:\d\d)$`)
-
-	// Crude bare-key + explicit-negative-zero matcher used only by the
-	// float/zero fixture recovery: `signed-neg = -0.0`, `-0e0`, etc.
-	// Ignores comments/strings because the fixture is simple.
-	negZeroAssignRe = regexp.MustCompile(
-		`(?m)^\s*([A-Za-z0-9_-]+)\s*=\s*-0(?:\.0+|[eE][+-]?\d+)?\s*(?:#|$)`,
-	)
 )
-
-// findNegativeZeroKeys reads a float/zero fixture and returns the set of
-// bare keys whose value was written with a leading `-`. Works around
-// the Go jsonic parser dropping the sign before we can observe it.
-func findNegativeZeroKeys(src string) map[string]bool {
-	out := map[string]bool{}
-	for _, m := range negZeroAssignRe.FindAllStringSubmatch(src, -1) {
-		out[m[1]] = true
-	}
-	return out
-}
 
 // deepEqual compares two canonicalized JSON-like trees. Used in place
 // of reflect.DeepEqual because maps come back from json.Unmarshal with

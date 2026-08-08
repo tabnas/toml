@@ -75,3 +75,35 @@ func TestDatetime(t *testing.T) {
 		}
 	}
 }
+
+// TestLeadingBOM pins the UTF-8 byte-order-mark rule: a TOML document may
+// start with one and it is ignored, but a BOM anywhere else is an error.
+// Covered by BurntSushi/toml-test valid/utf8-bom-01 and -02, which only run
+// when that (optional) suite is installed — hence this local guard. The TS
+// port has the matching test in ts/test/toml.test.ts.
+func TestLeadingBOM(t *testing.T) {
+	for _, src := range []string{"\uFEFFa = 1", "\uFEFF# c\na = 1"} {
+		res, err := Parse(src)
+		if err != nil {
+			t.Errorf("parse %q: %v", src, err)
+			continue
+		}
+		if v, ok := resultMap(res)["a"]; !ok || v != float64(1) {
+			t.Errorf("parse %q: want a=1 got %v (%T)", src, v, v)
+		}
+	}
+
+	// Not at the start: still an error.
+	if _, err := Parse("a = 1\n\uFEFFb = 2"); err == nil {
+		t.Error("BOM after the first character should not be accepted")
+	}
+
+	// Also via a directly built instance, not just the Parse wrapper.
+	res, err := MakeJsonic().Parse("\uFEFFa = 1")
+	if err != nil {
+		t.Fatalf("MakeJsonic parse with BOM: %v", err)
+	}
+	if v, ok := resultMap(res)["a"]; !ok || v != float64(1) {
+		t.Errorf("MakeJsonic parse with BOM: want a=1 got %v (%T)", v, v)
+	}
+}

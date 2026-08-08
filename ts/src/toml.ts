@@ -394,6 +394,21 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
 
   tn.grammar(grammarDef)
 
+  // A TOML document may begin with a UTF-8 BOM (U+FEFF), which the spec
+  // says to ignore (BurntSushi/toml-test valid/utf8-bom-01, -02). The
+  // engine's lexer has no BOM concept, so install a matcher that eats a
+  // single leading BOM as an ignorable #SP token. It runs before the
+  // `match` matcher (order 1e6) and only fires at source index 0, so a
+  // BOM anywhere else is still the error it should be. The Go port does
+  // the same via registerBOMMatcher.
+  tn.options({
+    lex: {
+      match: {
+        bom: { order: 5e5, make: makeBomMatcher },
+      },
+    },
+  })
+
   // Swap the grammar's regex-based date/time matchers for the
   // context-aware function matchers. The grammar file keeps the regex
   // form so the Go port (which has no equivalent of isKeyContext) still
@@ -407,6 +422,25 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       },
     },
   })
+}
+
+// Byte order mark. A TOML file is allowed to start with one; it carries
+// no content and must not reach the parser.
+const BOM = '\uFEFF'
+
+// Lex matcher factory for the leading BOM. Emits a zero-value #SP token
+// (#SP is in the IGNORE token set, so the parser never sees it).
+function makeBomMatcher() {
+  return function bomMatcher(lex: Lex) {
+    const pnt = lex.pnt
+    if (0 !== pnt.sI || BOM !== lex.src[0]) {
+      return undefined
+    }
+    const tkn = lex.token('#SP', undefined, BOM, pnt)
+    pnt.sI += 1
+    pnt.cI += 1
+    return tkn
+  }
 }
 
 // Value matchers fire unconditionally, so a date-shaped bare key
