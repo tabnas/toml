@@ -207,9 +207,9 @@ var (
 // that pass a TomlOptions get a freshly built instance (options may differ
 // per call), matching the previous behaviour.
 func Parse(src string, opts ...TomlOptions) (any, error) {
-	// A TOML document may begin with a UTF-8 BOM (U+FEFF); the spec says to
-	// ignore it. The lexer has no BOM rule, so strip a single leading one here.
-	src = strings.TrimPrefix(src, "\uFEFF")
+	// NOTE: a leading UTF-8 BOM is consumed by the bom lex matcher installed
+	// in apply() (registerBOMMatcher), so every instance (not just this
+	// convenience wrapper) accepts it, matching the TS plugin.
 	if len(opts) > 0 {
 		j := MakeJsonic(opts...)
 		return j.Parse(src)
@@ -282,6 +282,9 @@ func apply(j *jsonic.Jsonic) error {
 	// "Infinity" or as nil), so they're set here in Go where the literals
 	// are available directly.
 	registerSpecialFloats(j)
+
+	// Consume a leading UTF-8 BOM. See registerBOMMatcher.
+	registerBOMMatcher(j)
 
 	// Install the TOML-specific string matcher. Handles single- and
 	// double-quoted strings including the triple-quoted multi-line
@@ -387,6 +390,40 @@ func registerTomlStringMatcher(j *jsonic.Jsonic) {
 				"tomlstring": {
 					Order: 900000, // above match.value/token (1e6) not reached; below fixed tokens.
 					Make:  tomlStringMatcher,
+				},
+			},
+		},
+	})
+}
+
+// bom is the UTF-8 encoding of U+FEFF, the byte order mark.
+const bom = "\uFEFF"
+
+// registerBOMMatcher installs a lex matcher that eats a single UTF-8 BOM
+// at the very start of the source. A TOML document is allowed to begin
+// with one and it must not reach the parser
+// (BurntSushi/toml-test valid/utf8-bom-01, -02). The token is a #SP,
+// which is in the IGNORE set, so the parser never sees it. Restricted to
+// source index 0, so a BOM anywhere else stays an error. Go counterpart
+// of the TS plugin's `bom` lex matcher.
+func registerBOMMatcher(j *jsonic.Jsonic) {
+	j.SetOptions(jsonic.Options{
+		Lex: &jsonic.LexOptions{
+			Match: map[string]*jsonic.MatchSpec{
+				"bom": {
+					Order: 500000, // before match (1e6) and the string matcher.
+					Make: func(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher {
+						return func(lex *jsonic.Lex, _ *jsonic.Rule) *jsonic.Token {
+							pnt := lex.Cursor()
+							if pnt.SI != 0 || !strings.HasPrefix(lex.Src, bom) {
+								return nil
+							}
+							tkn := lex.Token("#SP", jsonic.TinSP, nil, bom)
+							pnt.SI += len(bom)
+							pnt.CI += len(bom)
+							return tkn
+						}
+					},
 				},
 			},
 		},

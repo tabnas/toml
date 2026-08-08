@@ -16,6 +16,28 @@ import { Toml } from '..'
 
 describe('toml', () => {
 
+  // A TOML document may start with a UTF-8 BOM, which is ignored; a BOM
+  // anywhere else is an error. Covered by BurntSushi/toml-test
+  // valid/utf8-bom-01 and -02, which only run when that (optional) suite
+  // is installed — hence this local guard. Go's twin is TestLeadingBOM in
+  // go/features_test.go.
+  test('leading-bom', () => {
+    const toml = new Tabnas().use(jsonic).use(Toml)
+    const BOM = '\uFEFF'
+
+    equal(toml.parse(BOM + 'a = 1'), { a: 1 })
+    equal(toml.parse(BOM + '# c\na = 1'), { a: 1 })
+
+    let mid: any = null
+    try {
+      toml.parse('a = 1\n' + BOM + 'b = 2')
+    }
+    catch (e: any) {
+      mid = e
+    }
+    equal(null != mid, true, 'BOM after the first character must not parse')
+  })
+
   test('toml-valid', async (t) => {
     const toml = new Tabnas().use(jsonic).use(Toml)
 
@@ -43,17 +65,26 @@ describe('toml', () => {
         counts.pass++
       }
       catch (e: any) {
-        console.log('FAIL', test.name)
-        // console.dir(test, { depth: null })
         counts.fail++
-        fails.push(test.name)
-        // throw e
+        fails.push(Path.relative(root, test.name) + ': ' + firstLine(e.message))
       }
     }
 
     console.log('COUNTS', counts)
 
-    console.log('FAILS', fails)
+    // The whole point of running the upstream suite is that a
+    // non-conformance breaks the build. Report every failure, then fail.
+    equal(fails, [],
+      `BurntSushi/toml-test valid suite: ${counts.fail} of ` +
+      `${found.length} failed:\n  ` + fails.join('\n  '))
+
+    // Guard against the suite silently emptying out (a bad clone, a
+    // moved directory): a green run must have actually run the fixtures.
+    if (counts.pass < 200) {
+      throw new Error(
+        'toml-test valid suite looks truncated: only ' + counts.pass +
+        ' fixtures ran')
+    }
 
 
     // Handle test case oddities
@@ -65,7 +96,13 @@ describe('toml', () => {
         name.endsWith('float/max-int') ||
         name.endsWith('spec-1.0.0/float-0') ||
         name.endsWith('spec-1.1.0/common-23') ||
-        name.endsWith('inline-table/spaces')
+        name.endsWith('inline-table/spaces') ||
+        // Every leaf in these two is a float; an integer-valued exponent
+        // (3e2, 3E2) parses to a plain JS number indistinguishable from an
+        // integer, so route the whole fixture through goFloat(). Mirrors
+        // the same list in go/toml_valid_test.go normalizeForToml().
+        name.endsWith('float/exponent') ||
+        name.endsWith('float/exponent-upper')
 
       let jstr = JSON.stringify(val, function(this: any, k: string, v: any) {
         if (Infinity === v) {
@@ -119,10 +156,7 @@ describe('toml', () => {
             }
             else
               if (('' + v).match(/^-?[0-9]+$/)) {
-                return {
-                  type: name.endsWith('exponent') ? 'float' : 'integer',
-                  value: '' + v + (name.endsWith('exponent') ? '.0' : '')
-                }
+                return { type: 'integer', value: '' + v }
               }
               else {
                 return { type: 'float', value: '' + v }
@@ -187,6 +221,11 @@ function goFloat(v: number): string {
     (_, sign, num) => 'e' + (sign || '+') + num.padStart(2, '0'),
   )
   return dec.length <= sci.length ? dec : sci
+}
+
+function firstLine(s: string) {
+  const i = s.indexOf('\n')
+  return 0 <= i ? s.substring(0, i) : s
 }
 
 function find(parent: string, found: any[]) {

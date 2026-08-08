@@ -29,8 +29,8 @@ runner does not yet assert error **codes** (see below).
 
 | Path | What it is |
 |---|---|
-| [`ts/`](ts/) | **Canonical** TypeScript implementation — the `@tabnas/toml` package (currently `0.9.4`). Plugin in `src/toml.ts`. Imports the engine as `@tabnas/parser` and the base grammar as `@tabnas/jsonic`. |
-| [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const Version` in `go/toml.go`, currently `0.1.2`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Depends on `github.com/tabnas/jsonic/go` (jsonic re-exports the engine API in Go). |
+| [`ts/`](ts/) | **Canonical** TypeScript implementation — the `@tabnas/toml` package (currently `0.4.1`). Plugin in `src/toml.ts`. Imports the engine as `@tabnas/parser` and the base grammar as `@tabnas/jsonic`. |
+| [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const Version` in `go/toml.go`, currently `0.4.1`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Depends on `github.com/tabnas/jsonic/go` (jsonic re-exports the engine API in Go). |
 | [`toml-grammar.jsonic`](toml-grammar.jsonic) | The grammar (repo top level), **source of truth for both runtimes**. Embedded verbatim into both source files. |
 | [`ts/embed-grammar.js`](ts/embed-grammar.js) | Embeds the grammar into `ts/src/toml.ts` AND `go/toml.go`. |
 | [`test/spec/`](test/spec/) | Shared `.tsv` conformance fixtures (`input → expected` JSON, or `ERROR:<code>`), run by both runtimes. |
@@ -149,6 +149,13 @@ value-matcher factories are referenced explicitly by name.
   adapted from `huan231/toml-nodejs` (MIT). Error codes it can raise:
   `unprintable`, `unterminated_string`, `invalid_ascii`,
   `invalid_unicode`.
+- **Leading BOM.** A TOML document may start with a UTF-8 BOM (U+FEFF)
+  and it must be ignored. The engine's lexer has no BOM concept, so the
+  plugin installs a `bom` lex matcher (`makeBomMatcher`, order `5e5`, so
+  it runs before the `match` matcher at `1e6`) that emits a `#SP` — an
+  IGNORE-set token — for a BOM at source index `0` only. A BOM anywhere
+  else still errors. Go's counterpart is `registerBOMMatcher` in
+  `go/toml.go`.
 - **Railroad legend.** The plugin registers a human description for the
   `#ID` token via `config.modify` → `cfg.tokenDesc`, which
   `@tabnas/railroad` reads off the live config when drawing the diagram
@@ -179,8 +186,11 @@ the TS-only hooks natively, not by parsing less:
   adds context-aware date-shaped-key handling (Go's analogue of the TS
   `isKeyContext` swap), `registerSpecialFloats` sets the `nan`/`inf`
   value defs (the Go counterpart of the TS in-code `options.value`
-  patch), and `injectIDLexGuards` works around a Go-jsonic lexer
-  limitation when `#ID` is expected at alt slot 1.
+  patch), `registerBOMMatcher` installs the leading-UTF-8-BOM matcher
+  (mirror of the TS `bom` matcher — note it is installed on the *engine*,
+  so `MakeJsonic()` instances accept a BOM too, not just the `Parse`
+  convenience wrapper), and `injectIDLexGuards` works around a Go-jsonic
+  lexer limitation when `#ID` is expected at alt slot 1.
 - `go/toml_tsv_test.go` (`TestTSV`) iterates `tsvSubset`, which currently
   lists **every** `.tsv` file in `test/spec` — so the Go suite runs the
   full shared fixture set, at parity with TS (the one runner difference
@@ -201,20 +211,45 @@ suite. It is **optional and not checked in** — install it with:
 cd ts && npm run install-toml-test   # git clone/pull into ts/test/toml-test
 ```
 
-Both suites **skip cleanly** when it is absent (the normal state on CI):
+Both runtimes pass the **whole** valid suite: **268 of 268** fixtures
+(the union of the `tests/files-toml-1.0.0` and `files-toml-1.1.0` valid
+lists as vendored by the upstream clone). Both tests **fail the build**
+on any fixture mismatch — TS asserts the collected failure list is empty
+(and that at least 200 fixtures actually ran, so a broken clone can't
+pass by running nothing); Go reports each failure with `t.Errorf`.
+
+The **invalid** suite is deliberately *not* claimed. This is a permissive
+grammar layered on relaxed-JSON jsonic, so it accepts many documents TOML
+rejects (at the time of writing 227 of the 509 invalid fixtures are
+correctly rejected). Do not read the valid-suite claim as a
+strict-validator claim.
+
+Both suites **skip cleanly** when the clone is absent (the normal state
+on CI, whose shared `polyglot-ci.yml` workflow does not install it):
 
 - TS (`ts/test/toml.test.ts`, the `toml-valid` test): guards
   `Fs.existsSync(.../test/toml-test/tests/valid)` and calls `t.skip(...)`
   + `return` when the directory is missing.
 - Go (`go/toml_valid_test.go`, `TestTomlValid`): guards `os.Stat` /
-  `os.IsNotExist` and calls `t.Skipf(...)`.
+  `os.IsNotExist` on `../ts/test/toml-test/tests/valid` (the npm script
+  clones under `ts/`, so the Go module reaches it via `../ts`) and calls
+  `t.Skipf(...)`.
+
+Because those two tests can skip, the BOM rule they cover
+(`valid/utf8-bom-01`, `-02`) is also pinned by always-on local tests:
+`leading-bom` in `ts/test/toml.test.ts` and `TestLeadingBOM` in
+`go/features_test.go`.
 
 Both tests normalise the parse result into the `{type, value}` shape the
 toml-test fixtures use (TS via a `JSON.stringify` replacer + `JSON.parse`
 reviver in `norm()`; Go via the recursive `normalizeForToml` walk), with
-a matching set of name-keyed fixups for cases where int-vs-float or
-`-0`/`inf`/`nan` can't be recovered from a plain JS/Go number. When you
-touch one side's normalisation, mirror it in the other.
+a matching set of name-keyed fixups for cases where int-vs-float can't be
+recovered from a plain JS/Go number (an integer-valued float like `+1.0`
+or `3e2`). The *values* themselves need no rescuing: both engines preserve
+negative zero and the special floats, so `-0` is read straight off the
+parsed number (`Object.is(v, -0)` in TS, `v == 0 && math.Signbit(v)` in
+Go) and `inf`/`nan` off `math.IsInf`/`math.IsNaN`. When you touch one
+side's normalisation, mirror it in the other.
 
 ## Build & test
 
@@ -244,23 +279,24 @@ The repo-root [`Makefile`](Makefile) (adapted from voxgig/util) wraps
 both halves: `make build|test|clean` run the TS and Go sides, and
 `make publish-go V=x.y.z` injects `V` into the `const Version` in
 `go/toml.go`, commits, and tags `go/vX.Y.Z`. `make publish-ts` publishes
-the TS package at its `package.json` version (currently `0.9.4`). Local
+the TS package at its `package.json` version (currently `0.4.1`). Local
 builds resolve the unpublished siblings via the repo-set `go.work` +
 node_modules symlinks (`admin/scripts/link.sh`); there is no checked-in
 `go.work` in this repo.
 
 ## CI
 
-`.github/workflows/build.yml` has two jobs, neither publishing to npm:
+`.github/workflows/ci.yml` is a thin caller: it delegates to the
+org-standard reusable workflow
+`tabnas/.github/.github/workflows/polyglot-ci.yml@main`, passing
+`deps: "parser debug json abnf railroad jsonic"` — the sibling tabnas
+repos this one is checked out next to and built against. The reusable
+workflow owns the matrix (Node/Go versions, OSes), the sibling clone +
+topo build, the `core.autocrlf false` setting (CRLF corrupts the `.tsv`
+fixtures) and the `go work` wiring; it does **not** publish to npm.
+`.github/workflows/release.yml` handles releases.
 
-- **build** (Ubuntu/Windows/macOS, Node 24): sets
-  `git config --global core.autocrlf false` (CRLF corrupts the `.tsv`
-  fixtures), git-clones the tabnas closure
-  (`parser debug json abnf railroad jsonic`) as siblings,
-  `npm i && npm run build --if-present` each in topo order, then
-  `npm test` here. The toml-test conformance suite is not installed, so
-  the `toml-valid` test skips.
-- **build-go** (Ubuntu/macOS, Go 1.24): clones the same siblings, mirrors
-  `admin/scripts/link.sh` by creating `vendor/` symlinks for any
-  `../vendor/` replaces and a `go work` over every non-vendor-replaced
-  module, then `go build`/`go test -v` here.
+CI does **not** install the BurntSushi/toml-test clone, so `toml-valid`
+(TS) and `TestTomlValid` (Go) both skip there. The conformance claim is
+therefore verified locally/by hand via `npm run install-toml-test`, not
+by CI — run it before making any claim about the suite.
