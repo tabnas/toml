@@ -3,15 +3,76 @@
 import { test, describe } from 'node:test'
 import Fs from 'node:fs'
 import Path from 'node:path'
-import { deepStrictEqual as equal } from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { deepStrictEqual as equal, ok } from 'node:assert/strict'
 
 import { Tabnas } from '@tabnas/parser'
 import { jsonic } from '@tabnas/jsonic'
 import { Toml } from '..'
 
 
-// NOTE: install toml-test repo to run
-// npm run install-toml-test
+// BurntSushi/toml-test conformance harness.
+//
+//   upstream: https://github.com/BurntSushi/toml-test
+//   pinned:   9eef1b959e0449d41a31d4e4e0a839faee534b36
+//
+// The corpus is NOT committed (project rule: no vendored third-party test
+// corpora). `scripts/fetch-toml-test.sh` clones it, pinned to that exact
+// commit, into the gitignored `ts/test/toml-test/`. `npm test` runs the
+// fetch via the `pretest` hook, so CI has the corpus; ensureCorpus() below
+// re-runs the same script as a belt-and-braces fallback.
+//
+// THIS SUITE MUST NEVER SKIP. It used to `t.skip()` when the corpus was
+// absent — which is exactly what CI looked like — so the conformance test
+// had never executed on CI at all while reporting green. A conformance
+// suite that quietly does not run is worse than no suite, because the
+// green tick is a lie. If the corpus cannot be obtained, FAIL.
+//
+// Both halves are now exercised:
+//
+//   valid/    must parse AND produce the correct value. Asserted at 100%.
+//   invalid/  must be rejected. Asserted against a measured FLOOR (see
+//             INVALID_FLOOR below), because the parser does not reject
+//             them all yet and a floor is what ratchets.
+
+const SUITE_URL = 'https://github.com/BurntSushi/toml-test'
+const SUITE_PIN = '9eef1b959e0449d41a31d4e4e0a839faee534b36'
+
+const REPO_ROOT = Path.join(__dirname, '..', '..')
+const SUITE_ROOT = Path.join(REPO_ROOT, 'ts', 'test', 'toml-test')
+const FETCH_SCRIPT = Path.join(REPO_ROOT, 'scripts', 'fetch-toml-test.sh')
+
+
+// Guarantee the corpus is on disk. Never skips: if it cannot be obtained,
+// throw with an actionable message so the suite goes red.
+function ensureCorpus(): string {
+  const halves = ['valid', 'invalid'].map((h) => Path.join(SUITE_ROOT, 'tests', h))
+  const present = () => halves.every((p) => Fs.existsSync(p))
+
+  if (!present()) {
+    try {
+      execFileSync('bash', [FETCH_SCRIPT], { stdio: 'inherit' })
+    }
+    catch (e: any) {
+      throw new Error(
+        'BurntSushi/toml-test conformance corpus is MISSING and could not be fetched.\n' +
+        `  suite:  ${SUITE_URL} @ ${SUITE_PIN}\n` +
+        `  expect: ${halves.join('\n          ')}\n` +
+        `  fix:    bash ${FETCH_SCRIPT}\n` +
+        'This test deliberately FAILS rather than skipping — a conformance\n' +
+        'test that silently does not run reports a green tick that is a lie.\n' +
+        `  cause:  ${e && e.message}`)
+    }
+  }
+
+  if (!present()) {
+    throw new Error(
+      `toml-test corpus still absent after running: bash ${FETCH_SCRIPT}\n` +
+      `Expected ${halves.join(' and ')}.`)
+  }
+
+  return SUITE_ROOT
+}
 
 
 describe('toml', () => {
@@ -38,18 +99,10 @@ describe('toml', () => {
     equal(null != mid, true, 'BOM after the first character must not parse')
   })
 
-  test('toml-valid', async (t) => {
+  test('toml-valid', async (_t) => {
     const toml = new Tabnas().use(jsonic).use(Toml)
 
-    let root = __dirname + '/../test/toml-test/tests/valid'
-
-    if (!Fs.existsSync(root)) {
-      // The external BurntSushi toml-test conformance suite is optional
-      // (`npm run install-toml-test`). Skip cleanly when it is not present
-      // (e.g. on CI) instead of crashing on a missing directory.
-      t.skip('toml-test conformance suite not installed')
-      return
-    }
+    let root = Path.join(ensureCorpus(), 'tests', 'valid')
 
     let found = find(root, [])
 
@@ -88,7 +141,19 @@ describe('toml', () => {
 
 
     // Handle test case oddities
-    function norm(val: any, name: string) {
+    function norm(val: any, rawName: string) {
+      // The fixture name arrives as a filesystem path, so on Windows its
+      // separator is `\`. Every name test below is written with `/`, so
+      // without this every fixup keyed on a two-segment name silently
+      // stopped matching there and the fixture failed. That is exactly
+      // what happened the first time this suite reached a Windows runner:
+      // the 7 failures were precisely the 7 slash-bearing keys
+      // (float/max-int, float/exponent, float/exponent-upper, float/zero,
+      // inline-table/spaces, spec-1.0.0/float-0, spec-1.1.0/common-23),
+      // while the slash-free `long` and `underscore` keys kept working.
+      // Compare on one canonical separator.
+      const name = rawName.split(Path.sep).join('/')
+
       // Tests where every numeric leaf is a float (values happen to be
       // integer-valued, so the int-vs-float guess below can't recover this
       // without help).
@@ -207,7 +272,131 @@ describe('toml', () => {
       return jout
     }
   })
+
+
+  // The other half of the corpus: 509 documents that a TOML parser MUST
+  // reject. This half had never been loaded by either runtime — the
+  // must-fail files have been on disk since the first clone and nothing
+  // read them.
+  //
+  // It is asserted against a FLOOR rather than at 100%, because the
+  // parser does not reject them all today (the base grammar inherited
+  // from @tabnas/jsonic is lenient: `x = tru` becomes a string, `a = 1
+  // b = 2` parses without a newline, duplicate keys silently overwrite).
+  // A floor is what ratchets: it fails the build the moment rejection
+  // regresses, and it is meant to be raised — never lowered — as the
+  // grammar tightens.
+  test('toml-invalid', async (_t) => {
+    const toml = new Tabnas().use(jsonic).use(Toml)
+
+    const root = Path.join(ensureCorpus(), 'tests', 'invalid')
+    const found = findInvalid(root, [])
+
+    // Guard against the corpus silently emptying out (a bad clone, a
+    // moved directory): a green run must have actually run the fixtures.
+    ok(found.length >= INVALID_TOTAL,
+      `toml-test invalid suite looks truncated: ${found.length} fixtures ` +
+      `found, expected at least ${INVALID_TOTAL}`)
+
+    let rejected = 0
+    let diagnosed = 0
+    const accepted: string[] = []
+    const crashRejects: string[] = []
+
+    for (const t of found) {
+      let out: any
+      try {
+        out = toml.parse(t.toml)
+      }
+      catch (e: any) {
+        // Rejected. Record HOW: a Tabnas/jsonic parse error carries a
+        // string `code`; anything else is an internal crash. A crash is
+        // still a rejection, but it is not a conformant one, so the two
+        // are counted separately and neither can be traded for the other.
+        rejected++
+        if (e && 'string' === typeof e.code) {
+          diagnosed++
+        }
+        else {
+          crashRejects.push(
+            `${t.name}: ${e && e.constructor && e.constructor.name}: ` +
+            firstLine('' + (e && e.message)))
+        }
+        continue
+      }
+      accepted.push(`${t.name}: wrongly accepted as ${JSON.stringify(out)}`)
+    }
+
+    console.log(
+      `toml-invalid: rejected ${rejected}/${found.length} ` +
+      `(${((100 * rejected) / found.length).toFixed(1)}%), ` +
+      `of which diagnosed ${diagnosed}, internal crash ${crashRejects.length}; ` +
+      `wrongly accepted ${accepted.length}`)
+
+    for (const line of crashRejects.slice(0, MAX_REPORT)) {
+      console.log('  CRASH-REJECT ' + line)
+    }
+    if (crashRejects.length > MAX_REPORT) {
+      console.log(`  ...and ${crashRejects.length - MAX_REPORT} more crash-rejections`)
+    }
+    for (const line of accepted.slice(0, MAX_REPORT)) {
+      console.log('  ACCEPTED ' + line)
+    }
+    if (accepted.length > MAX_REPORT) {
+      console.log(`  ...and ${accepted.length - MAX_REPORT} more wrongly accepted`)
+    }
+
+    ok(rejected >= INVALID_FLOOR,
+      `BurntSushi/toml-test invalid suite REGRESSED: ${rejected} of ` +
+      `${found.length} rejected, floor is ${INVALID_FLOOR} ` +
+      `(suite ${SUITE_URL} @ ${SUITE_PIN}). Documents that must be ` +
+      'rejected are now being accepted. Raise the floor when the grammar ' +
+      'improves; never lower it to make this pass.')
+
+    ok(diagnosed >= INVALID_DIAGNOSED_FLOOR,
+      `BurntSushi/toml-test invalid suite REGRESSED: only ${diagnosed} of ` +
+      `${found.length} rejections are diagnosed parse errors, floor is ` +
+      `${INVALID_DIAGNOSED_FLOOR}. A rejection that is really an internal ` +
+      'crash does not count as conformance.')
+  })
 })
+
+
+// Floors for the invalid half, MEASURED on 2026-08-09 against
+// BurntSushi/toml-test @ 9eef1b9 with @tabnas/toml at 0.5.0. These are a
+// ratchet, not a target: raise them when the grammar tightens, never
+// lower them. See test('toml-invalid').
+const INVALID_TOTAL = 509
+const INVALID_FLOOR = 227
+const INVALID_DIAGNOSED_FLOOR = 212
+
+// How many individual failures to print; the assertion message is not
+// truncated. Only bounds console noise.
+const MAX_REPORT = 40
+
+
+// The invalid half has no companion .json — the documents are simply
+// required not to parse.
+function findInvalid(
+  base: string,
+  found: { name: string, toml: string }[],
+  dir: string = base,
+) {
+  for (const file of Fs.readdirSync(dir).sort()) {
+    const filepath = Path.join(dir, file)
+    const desc = Fs.lstatSync(filepath)
+    if (desc.isDirectory()) {
+      findInvalid(base, found, filepath)
+    }
+    else if (desc.isFile() && file.endsWith('.toml')) {
+      found.push({
+        name: Path.relative(base, filepath).split(Path.sep).join('/'),
+        toml: Fs.readFileSync(filepath).toString(),
+      })
+    }
+  }
+  return found
+}
 
 // Format a JS number the way Go's %g does: scientific or decimal,
 // whichever is shorter (ties go to decimal). Matches the "value" strings

@@ -115,7 +115,17 @@ function importsToRequire(code) {
 }
 
 // Rewrite `<expr>  // => <expected>` lines into __eq(expr, expected) calls.
-const ARROW = /\/\/\s*=>(.*)$/
+//
+// The `m` flag matters. ARROW is applied two ways: per line, where `$` is
+// the end of the line either way, and (below) to a whole joined block as
+// the gate that decides whether the block carries assertions at all.
+// Without `m`, `$` there means end of STRING and `.` never crosses a
+// newline, so a block was only recognised when its `// =>` happened to be
+// on the LAST line; any other example was silently dropped and the suite
+// stayed green while testing nothing. No block in this repo tripped it as
+// of 2026-08-09 (16 blocks discovered either way) — the trap was latent,
+// and one example gaining a trailing line would have sprung it.
+const ARROW = /\/\/\s*=>(.*)$/m
 function rewriteAssertions(code) {
   let count = 0
   const out = code.split('\n').map((line) => {
@@ -186,7 +196,14 @@ describe('doc-examples', () => {
   }
 
   it('found at least one tested example (sanity)', () => {
-    // Not a hard failure if a repo has no `// =>` examples yet.
-    assert.ok(testable >= 0, `tested ${testable} doc example block(s)`)
+    // This used to assert `testable >= 0`. A count is always >= 0, so the
+    // check could never fail: if doc-example discovery broke outright and
+    // zero examples ran, the suite still went green. This repo's README
+    // and docs carry executable `// =>` examples, so require at least one.
+    assert.ok(
+      testable > 0,
+      'no doc example blocks with a `// =>` assertion were found in ' +
+      `${files.length} markdown file(s) — doc-example discovery is broken`,
+    )
   })
 })
