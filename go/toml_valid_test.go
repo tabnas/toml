@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -17,17 +18,93 @@ import (
 	jsonic "github.com/tabnas/jsonic/go"
 )
 
+// BurntSushi/toml-test conformance harness (Go side); twin of the
+// TypeScript one in ../ts/test/toml.test.ts.
+//
+//	upstream: https://github.com/BurntSushi/toml-test
+//	pinned:   9eef1b959e0449d41a31d4e4e0a839faee534b36
+//
+// The corpus is NOT committed (project rule: no vendored third-party test
+// corpora). ../scripts/fetch-toml-test.sh clones it, pinned to that exact
+// commit, into the gitignored ../ts/test/toml-test/. ensureCorpus below
+// runs that script when the corpus is missing and FAILS if it still is.
+//
+// THIS SUITE MUST NEVER SKIP. It used to t.Skipf when the corpus was
+// absent, which is exactly what CI looked like, so these tests had never
+// executed on CI at all while the job reported green. A conformance suite
+// that quietly does not run is worse than no suite.
+const (
+	suiteURL = "https://github.com/BurntSushi/toml-test"
+	suitePin = "9eef1b959e0449d41a31d4e4e0a839faee534b36"
+)
+
+// suiteRoot is the toml-test checkout, relative to go/. The TS package
+// owns the checkout location; Go reads it from there.
+var suiteRoot = filepath.Join("..", "ts", "test", "toml-test")
+
+var fetchScript = filepath.Join("..", "scripts", "fetch-toml-test.sh")
+
+// Floors for the invalid half, MEASURED on 2026-08-09 against
+// BurntSushi/toml-test @ 9eef1b9 with the Go parser at VERSION 0.5.0.
+// A ratchet, not a target: raise them when the grammar tightens, never
+// lower them. See TestTomlInvalid.
+const (
+	invalidTotal          = 509
+	invalidFloor          = 230
+	invalidDiagnosedFloor = 230
+)
+
+// maxReport bounds how many individual failures are printed; the
+// pass/fail counts are always exact.
+const maxReport = 40
+
+// ensureCorpus guarantees the conformance corpus is on disk, fetching it
+// if need be. It never skips: if the corpus cannot be obtained the test
+// FAILS, because a conformance test that silently does not run reports a
+// green tick that is a lie.
+func ensureCorpus(t *testing.T) string {
+	t.Helper()
+
+	present := func() bool {
+		for _, half := range []string{"valid", "invalid"} {
+			if _, err := os.Stat(filepath.Join(suiteRoot, "tests", half)); err != nil {
+				return false
+			}
+		}
+		return true
+	}
+
+	if present() {
+		return suiteRoot
+	}
+
+	cmd := exec.Command("bash", fetchScript)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf(
+			"BurntSushi/toml-test conformance corpus is MISSING and could not be fetched.\n"+
+				"  suite:  %s @ %s\n"+
+				"  expect: %s/tests/{valid,invalid}\n"+
+				"  fix:    bash %s\n"+
+				"This test deliberately FAILS rather than skipping.\n"+
+				"  cause:  %v",
+			suiteURL, suitePin, suiteRoot, fetchScript, err)
+	}
+
+	if !present() {
+		t.Fatalf("toml-test corpus still absent after running %s (expected %s/tests/{valid,invalid})",
+			fetchScript, suiteRoot)
+	}
+
+	return suiteRoot
+}
+
 // TestTomlValid runs the BurntSushi/toml-test "valid" suite against the
 // Go parser and compares against the fixture JSON, mirroring the
-// TypeScript `toml-valid` test. Skipped if test/toml-test is not
-// installed (run `npm run install-toml-test`).
+// TypeScript `toml-valid` test.
 func TestTomlValid(t *testing.T) {
-	// `npm run install-toml-test` clones into ts/test/toml-test (the script
-	// runs from ts/), so from go/ the suite lives under ../ts/test.
-	root := filepath.Join("..", "ts", "test", "toml-test", "tests", "valid")
-	if _, err := os.Stat(root); os.IsNotExist(err) {
-		t.Skipf("toml-test fixtures not installed at %s — run `npm run install-toml-test` from ts/", root)
-	}
+	root := filepath.Join(ensureCorpus(t), "tests", "valid")
 
 	type fixture struct {
 		name string // test path stem (parent/…/base)
@@ -115,6 +192,129 @@ func TestTomlValid(t *testing.T) {
 			t.Errorf("…and %d more failures", len(fails)-max)
 		}
 	}
+}
+
+// TestTomlInvalid runs the other half of the corpus: 509 documents that a
+// TOML parser MUST reject. This half had never been loaded by either
+// runtime — the must-fail files have been on disk since the first clone
+// and nothing read them.
+//
+// It is asserted against a FLOOR rather than at 100%, because the parser
+// does not reject them all today (the base grammar inherited from
+// @tabnas/jsonic is lenient). A floor is what ratchets: it fails the
+// build the moment rejection regresses, and it is meant to be raised —
+// never lowered — as the grammar tightens.
+func TestTomlInvalid(t *testing.T) {
+	root := filepath.Join(ensureCorpus(t), "tests", "invalid")
+
+	type fixture struct {
+		name string
+		toml string
+	}
+
+	var fixtures []fixture
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".toml") {
+			return err
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		fixtures = append(fixtures, fixture{
+			name: filepath.ToSlash(rel),
+			toml: string(src),
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+
+	sort.Slice(fixtures, func(i, j int) bool { return fixtures[i].name < fixtures[j].name })
+
+	// Guard against the corpus silently emptying out (a bad clone, a moved
+	// directory): a green run must have actually run the fixtures.
+	if len(fixtures) < invalidTotal {
+		t.Fatalf("toml-test invalid suite looks truncated: %d fixtures found, expected at least %d",
+			len(fixtures), invalidTotal)
+	}
+
+	var rejected, diagnosed int
+	var accepted, crashRejects []string
+
+	for _, f := range fixtures {
+		out, perr, panicked := safeParse(f.toml)
+		if perr != nil {
+			// Rejected. Record HOW: a returned error is a diagnosed parse
+			// error, a recovered panic is an internal crash. A crash is still
+			// a rejection but not a conformant one, so the two are counted
+			// separately and neither can be traded for the other.
+			rejected++
+			if panicked {
+				crashRejects = append(crashRejects, f.name+": "+firstLine(perr.Error()))
+			} else {
+				diagnosed++
+			}
+			continue
+		}
+		gotJSON, _ := json.Marshal(out)
+		accepted = append(accepted, fmt.Sprintf("%s: wrongly accepted as %s", f.name, string(gotJSON)))
+	}
+
+	t.Logf("toml-invalid: rejected %d/%d (%.1f%%), of which diagnosed %d, internal panic %d; wrongly accepted %d",
+		rejected, len(fixtures), 100*float64(rejected)/float64(len(fixtures)),
+		diagnosed, len(crashRejects), len(accepted))
+
+	for _, msg := range capReport(crashRejects) {
+		t.Logf("  CRASH-REJECT %s", msg)
+	}
+	for _, msg := range capReport(accepted) {
+		t.Logf("  ACCEPTED %s", msg)
+	}
+
+	if rejected < invalidFloor {
+		t.Errorf("BurntSushi/toml-test invalid suite REGRESSED: %d of %d rejected, floor is %d "+
+			"(suite %s @ %s). Documents that must be rejected are now being accepted. "+
+			"Raise the floor when the grammar improves; never lower it to make this pass.",
+			rejected, len(fixtures), invalidFloor, suiteURL, suitePin)
+	}
+
+	if diagnosed < invalidDiagnosedFloor {
+		t.Errorf("BurntSushi/toml-test invalid suite REGRESSED: only %d of %d rejections are "+
+			"diagnosed parse errors, floor is %d. A rejection that is really an internal panic "+
+			"does not count as conformance.",
+			diagnosed, len(fixtures), invalidDiagnosedFloor)
+	}
+}
+
+// safeParse calls Parse, converting a panic into an error so one bad
+// fixture cannot abort the whole measurement. `panicked` distinguishes an
+// internal crash from a diagnosed parse error.
+func safeParse(src string) (out any, err error, panicked bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			out = nil
+			err = fmt.Errorf("PANIC: %v", rec)
+			panicked = true
+		}
+	}()
+	out, err = Parse(src)
+	return
+}
+
+// capReport truncates a report list to maxReport entries, appending a
+// note when it does.
+func capReport(msgs []string) []string {
+	if len(msgs) <= maxReport {
+		return msgs
+	}
+	out := append([]string{}, msgs[:maxReport]...)
+	return append(out, fmt.Sprintf("...and %d more", len(msgs)-maxReport))
 }
 
 // normalizeForToml converts a Parse result into the `{type, value}`

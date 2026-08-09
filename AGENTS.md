@@ -203,41 +203,71 @@ the TS-only hooks natively, not by parsing less:
 
 ## The external conformance suite (BurntSushi/toml-test)
 
-Beyond the shared `.tsv` fixtures, both runtimes can run the upstream
-[BurntSushi/toml-test](https://github.com/BurntSushi/toml-test) "valid"
-suite. It is **optional and not checked in** — install it with:
+Beyond the shared `.tsv` fixtures, both runtimes run the upstream
+[BurntSushi/toml-test](https://github.com/BurntSushi/toml-test) corpus,
+**both halves**.
+
+### Getting the corpus
+
+The corpus is **never committed** (project rule: no vendored third-party
+test corpora). [`scripts/fetch-toml-test.sh`](scripts/fetch-toml-test.sh)
+clones it into the gitignored `ts/test/toml-test/`, pinned to commit
+`9eef1b959e0449d41a31d4e4e0a839faee534b36`. A git commit SHA is a content
+hash over the whole tree and git verifies every object against it, so the
+pin *is* the integrity check — nothing unverified is downloaded, and
+upstream cannot move the corpus under us. The checkout is sparse
+(`tests/` + licence only) because upstream is itself a Go module and a
+stray `go.mod` under this tree would be swept into the generated
+repo-root `go.work`.
 
 ```bash
-cd ts && npm run install-toml-test   # git clone/pull into ts/test/toml-test
+./scripts/fetch-toml-test.sh          # idempotent
+cd ts && npm run install-toml-test    # same script
 ```
 
-Both runtimes pass the **whole** valid suite: **268 of 268** fixtures
-(the union of the `tests/files-toml-1.0.0` and `files-toml-1.1.0` valid
-lists as vendored by the upstream clone). Both tests **fail the build**
-on any fixture mismatch — TS asserts the collected failure list is empty
-(and that at least 200 fixtures actually ran, so a broken clone can't
-pass by running nothing); Go reports each failure with `t.Errorf`.
+### Neither suite is allowed to skip
 
-The **invalid** suite is deliberately *not* claimed. This is a permissive
+`npm test` runs the fetch through the npm `pretest` hook, and both
+harnesses re-run the script themselves if the corpus is still missing; if
+it cannot be obtained they **fail** with an actionable message. A
+conformance suite that quietly does not run is worse than no suite,
+because the green tick is a lie. Both used to `t.skip` / `t.Skipf` when
+the corpus was absent — which is precisely what CI looked like — so
+neither had ever executed on CI. **Do not reintroduce a skip here.**
+
+### What each half asserts
+
+| Half | Fixtures | Assertion |
+|---|---|---|
+| `valid/` | 268 | must parse **and** produce the correct value — asserted at **100%** |
+| `invalid/` | 509 | must be rejected — asserted against a measured **floor** |
+
+Valid: TS (`toml-valid`) asserts the collected failure list is empty and
+that at least 200 fixtures actually ran, so a broken clone cannot pass by
+running nothing; Go (`TestTomlValid`) reports each failure with
+`t.Errorf`.
+
+Invalid (`toml-invalid` / `TestTomlInvalid`): this is a permissive
 grammar layered on relaxed-JSON jsonic, so it accepts many documents TOML
-rejects (at the time of writing 227 of the 509 invalid fixtures are
-correctly rejected). Do not read the valid-suite claim as a
-strict-validator claim.
+rejects, and 100% is not reachable today. The floor is instead pinned at
+what was **measured**, and it ratchets: it breaks the build the moment
+rejection regresses, and it is meant to be **raised** as the grammar
+tightens. **Never lower a floor to make the build pass.** The floors live
+next to the tests — `INVALID_FLOOR` / `INVALID_DIAGNOSED_FLOOR` in
+`ts/test/toml.test.ts`, `invalidFloor` / `invalidDiagnosedFloor` in
+`go/toml_valid_test.go`.
 
-Both suites **skip cleanly** when the clone is absent (the normal state
-on CI, whose shared `polyglot-ci.yml` workflow does not install it):
+Rejections are counted two ways, and the two cannot be traded for each
+other: a **diagnosed** rejection is a real parse error (a `.code`-bearing
+Tabnas/jsonic error in TS, a returned `error` in Go); anything else is an
+internal crash (a `TypeError` in TS, a recovered panic in Go). A crash is
+still a rejection but it is not a *conformant* one, so both have their
+own floor. Fixing a crash into a diagnosis raises the second number;
+turning a diagnosis into a crash breaks the build.
 
-- TS (`ts/test/toml.test.ts`, the `toml-valid` test): guards
-  `Fs.existsSync(.../test/toml-test/tests/valid)` and calls `t.skip(...)`
-  + `return` when the directory is missing.
-- Go (`go/toml_valid_test.go`, `TestTomlValid`): guards `os.Stat` /
-  `os.IsNotExist` on `../ts/test/toml-test/tests/valid` (the npm script
-  clones under `ts/`, so the Go module reaches it via `../ts`) and calls
-  `t.Skipf(...)`.
-
-Because those two tests can skip, the BOM rule they cover
-(`valid/utf8-bom-01`, `-02`) is also pinned by always-on local tests:
-`leading-bom` in `ts/test/toml.test.ts` and `TestLeadingBOM` in
+The suites are no longer allowed to skip, but the BOM rule they cover
+(`valid/utf8-bom-01`, `-02`) also stays pinned by corpus-free local
+tests: `leading-bom` in `ts/test/toml.test.ts` and `TestLeadingBOM` in
 `go/features_test.go`.
 
 Both tests normalise the parse result into the `{type, value}` shape the
@@ -261,10 +291,11 @@ npm run build          # embeds grammar, then tsc --build src test
 npm test               # node --test over dist-test/*.test.js
 ```
 
-`npm test` runs the `.tsv` fixtures (`toml-tsv.test.ts`), the optional
-toml-test conformance suite (`toml.test.ts`, skipped if not installed),
-and the README/doc example harness (`doc-examples.test.ts`, which runs
-fenced `js` blocks containing `// =>` assertions). `npm run test-cov`
+`npm test` first runs `pretest` (`scripts/fetch-toml-test.sh`), then the
+`.tsv` fixtures (`toml-tsv.test.ts`), the toml-test conformance suite
+(`toml.test.ts` — both halves, never skips), and the README/doc example
+harness (`doc-examples.test.ts`, which runs fenced `js` blocks containing
+`// =>` assertions). `npm run test-cov`
 produces `coverage/lcov.info`. There is **no CLI** in this package (no
 `bin` in `package.json`).
 
@@ -272,7 +303,8 @@ Go (from `go/`):
 
 ```bash
 go build ./...
-go test -v ./...       # tsvSubset fixtures + feature/unit tests; toml-test skipped if absent
+go test -v ./...       # tsvSubset fixtures + feature/unit tests + toml-test
+                       # (fetches the corpus itself; never skips)
 ```
 
 The repo-root [`Makefile`](Makefile) (adapted from voxgig/util) wraps
@@ -296,7 +328,18 @@ topo build, the `core.autocrlf false` setting (CRLF corrupts the `.tsv`
 fixtures) and the `go work` wiring; it does **not** publish to npm.
 `.github/workflows/release.yml` handles releases.
 
-CI does **not** install the BurntSushi/toml-test clone, so `toml-valid`
-(TS) and `TestTomlValid` (Go) both skip there. The conformance claim is
-therefore verified locally/by hand via `npm run install-toml-test`, not
-by CI — run it before making any claim about the suite.
+**How the conformance corpus reaches CI.** A caller job that uses a
+reusable workflow cannot add its own `steps`, and this repo must not edit
+`tabnas/.github`, so the fetch is wired into the commands CI already
+runs:
+
+- ts job: npm's `pretest` hook runs `scripts/fetch-toml-test.sh` before
+  `npm test`.
+- go job: `TestTomlValid` / `TestTomlInvalid` run the same script
+  themselves via `ensureCorpus`. The workspace is built from
+  `find . -name go.mod` *before* the tests run, and the sparse checkout
+  contains no `go.mod`, so the corpus never enters `go.work`.
+
+Both paths fail loudly if the corpus cannot be obtained. If the reusable
+workflow ever gains a pre-test hook input, prefer an explicit CI step —
+but never make the tests skip instead.
