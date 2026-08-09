@@ -281,6 +281,17 @@ parsed number (`Object.is(v, -0)` in TS, `v == 0 && math.Signbit(v)` in
 Go) and `inf`/`nan` off `math.IsInf`/`math.IsNaN`. When you touch one
 side's normalisation, mirror it in the other.
 
+Those fixup keys are written with `/`, so both sides canonicalise the
+fixture name to forward slashes before matching (`rawName.split(Path.sep)
+.join('/')` in TS, `filepath.ToSlash` in Go). Skipping that in TS is a
+Windows-only failure: `Path.join` yields `\`, every two-segment key stops
+matching, and exactly the slash-bearing fixups go dark. It bit on the
+first run that ever reached a Windows runner with the corpus present.
+These name-keyed fixups are a known weakness — they flatter the valid
+number by rewriting values based on which fixture is running. Removing
+them is a *parser* job (make the int/float distinction recoverable); do
+not remove them without fixing what they paper over.
+
 ## Build & test
 
 TypeScript (from `ts/`):

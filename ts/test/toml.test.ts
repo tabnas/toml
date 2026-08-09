@@ -141,7 +141,19 @@ describe('toml', () => {
 
 
     // Handle test case oddities
-    function norm(val: any, name: string) {
+    function norm(val: any, rawName: string) {
+      // The fixture name arrives as a filesystem path, so on Windows its
+      // separator is `\`. Every name test below is written with `/`, so
+      // without this every fixup keyed on a two-segment name silently
+      // stopped matching there and the fixture failed. That is exactly
+      // what happened the first time this suite reached a Windows runner:
+      // the 7 failures were precisely the 7 slash-bearing keys
+      // (float/max-int, float/exponent, float/exponent-upper, float/zero,
+      // inline-table/spaces, spec-1.0.0/float-0, spec-1.1.0/common-23),
+      // while the slash-free `long` and `underscore` keys kept working.
+      // Compare on one canonical separator.
+      const name = rawName.split(Path.sep).join('/')
+
       // Tests where every numeric leaf is a float (values happen to be
       // integer-valued, so the int-vs-float guess below can't recover this
       // without help).
