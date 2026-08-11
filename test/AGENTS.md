@@ -14,27 +14,41 @@ Tab-separated, one case per line, with a header row naming the columns
 | `input` | TOML source. |
 | `expected` | The parse result as JSON. |
 
-### What the loaders actually do — mind these
+### What the loader actually does — mind these
 
-- **Escapes.** `\n`, `\r`, `\r\n` and `\t` are decoded, in **both** columns.
-  A literal `\\` is **not** decoded by the TypeScript loader (Go's leaves it
-  alone too), so there is no portable way to write a single backslash — keep
-  backslashes out of fixtures.
-- **`#` does not start a comment.** Both loaders split every non-blank line
-  at the first tab, so a row whose TOML source begins with `#` (a TOML
-  comment) is an ordinary data row, which is what `comments.tsv` relies on.
-  There is no comment syntax for this file format.
-- Go splits at the **first** tab only, TypeScript splits on every tab and
-  uses the first two fields; a fixture must therefore have exactly two
-  columns.
+There is one loader now, from `@tabnas/support`, in two languages written
+to behave identically. Its
+[reference](https://github.com/tabnas/support/blob/main/doc/reference.md)
+is the authority; what matters here:
+
+- **Escapes.** `\n`, `\r`, `\t` and `\\` are decoded in the `input` column
+  only. A backslash IS writable now — `\\` — where before neither loader
+  decoded it and the guidance was to keep backslashes out of fixtures.
+  `expected` is raw JSON, which carries its own escape rules and must not
+  be decoded twice; it used to be decoded, which was the same cell meaning
+  two things depending on which runtime read it.
+- **A `#`-leading row is still data** as long as it has a tab — which
+  every data row does. That is exactly the rule `comments.tsv` needs, and
+  it is the shared loader's rule, not a local quirk. A `#`-leading line
+  with NO tab is a comment and is skipped; there are none here.
+- Both runtimes split on every tab and read the columns by name from the
+  header.
 
 ## Who runs what
 
-- TypeScript: `ts/test/toml-tsv.test.ts`.
-- Go: `go/toml_tsv_test.go`.
+- TypeScript: `ts/test/toml-tsv.test.ts` — `makeRunner(...).dir(...)`.
+- Go: `go/toml_tsv_test.go` — `support.Runner{...}.Dir(t, dir)`.
 
-Both name the same files. A fixture only one runtime runs proves nothing, so
-wire a new file into both.
+Fixtures are discovered by **listing the directory**, so a new `.tsv` runs
+in both runtimes at once. They used to be named in a list per runtime, and
+a fixture wired into one runtime only would have proved nothing.
+
+An `ERROR:` row now pins the error **code** in both runtimes. Go used to
+accept any rejection, which hid a real divergence: `"unterminated` is
+rejected by both, but TypeScript calls it `unexpected` and Go calls it
+`unterminated_string`. That one input is recorded in `divergentCode` in
+`go/toml_tsv_test.go` and pinned by `TestDivergentCodesAreStillDivergent`,
+which fails as soon as the allowance stops being needed.
 
 ## Rules
 

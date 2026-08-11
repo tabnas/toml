@@ -1,100 +1,30 @@
 /* Copyright (c) 2022-2026 Richard Rodger and other contributors, MIT License */
 
-import { test, describe } from 'node:test'
-import { deepStrictEqual, throws } from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+// Cross-runtime conformance, driven by the shared `test/spec/*.tsv` fixtures
+// at the repo root (see ../../test/AGENTS.md).
+//
+// The fixture loader, the escape codec, the `ERROR:<code>` contract and the
+// row loop all come from @tabnas/support, whose Go half `go/toml_tsv_test.go`
+// uses to run the SAME files — so the two implementations cannot drift
+// without one of them going red, and neither can the two loaders.
+//
+// What is left here is only what is specific to toml: how to build the
+// parser.
 
 import { Tabnas } from '@tabnas/parser'
 import { jsonic } from '@tabnas/jsonic'
+import { findSpecDir, makeRunner } from '@tabnas/support'
+
 import { Toml } from '..'
 
-
-function unescape(str: string): string {
-  return str.replace(/\\r\\n|\\n|\\r|\\t/g, (m) => {
-    if (m === '\\r\\n') return '\r\n'
-    if (m === '\\n') return '\n'
-    if (m === '\\r') return '\r'
-    if (m === '\\t') return '\t'
-    return m
-  })
-}
-
-
-function loadTSV(name: string): { input: string; expected: string; row: number }[] {
-  const specPath = join(__dirname, '..', '..', 'test', 'spec', name + '.tsv')
-  const lines = readFileSync(specPath, 'utf8').split(/\r?\n/).filter(Boolean)
-  return lines.slice(1).map((line, i) => {
-    const cols = line.split('\t').map(unescape)
-    return { input: cols[0], expected: cols[1], row: i + 2 }
-  })
-}
-
-
-function makeToml() {
-  return new Tabnas().use(jsonic).use(Toml)
-}
-
-
-// Normalize actual output so null-prototype maps (produced by Jsonic) compare
-// equal to plain JSON objects via deepStrictEqual.
-function normalize(v: any): any {
-  return JSON.parse(JSON.stringify(v))
-}
-
-
-function runTSV(name: string, j: ReturnType<typeof makeToml>) {
-  const entries = loadTSV(name)
-  for (const { input, expected, row } of entries) {
-    if (expected.startsWith('ERROR:')) {
-      const code = expected.substring('ERROR:'.length)
-      throws(
-        () => j.parse(input),
-        (err: any) => err.code === code,
-        `${name}.tsv row ${row}: expected error ${code} for input=${JSON.stringify(input)}`,
-      )
-    } else {
-      try {
-        deepStrictEqual(normalize(j.parse(input)), JSON.parse(expected))
-      } catch (err: any) {
-        err.message = `${name}.tsv row ${row}: input=${JSON.stringify(input)} expected=${expected}\n${err.message}`
-        throw err
-      }
-    }
-  }
-}
-
-
-describe('toml-tsv', () => {
-
-  test('happy', () => runTSV('happy', makeToml()))
-
-  test('basic-values', () => runTSV('basic-values', makeToml()))
-
-  test('integers', () => runTSV('integers', makeToml()))
-
-  test('floats', () => runTSV('floats', makeToml()))
-
-  test('strings', () => runTSV('strings', makeToml()))
-
-  test('arrays', () => runTSV('arrays', makeToml()))
-
-  test('tables', () => runTSV('tables', makeToml()))
-
-  test('dotted-keys', () => runTSV('dotted-keys', makeToml()))
-
-  test('inline-tables', () => runTSV('inline-tables', makeToml()))
-
-  test('array-of-tables', () => runTSV('array-of-tables', makeToml()))
-
-  test('quoted-keys', () => runTSV('quoted-keys', makeToml()))
-
-  test('comments', () => runTSV('comments', makeToml()))
-
-  test('whitespace', () => runTSV('whitespace', makeToml()))
-
-  test('mixed', () => runTSV('mixed', makeToml()))
-
-  test('errors', () => runTSV('errors', makeToml()))
-
+makeRunner({
+  // toml takes no per-row options, but a fresh parser per row keeps one
+  // case's table state from reaching the next.
+  parse: (input) => new Tabnas().use(jsonic).use(Toml).parse(input),
 })
+  // `findSpecDir` walks up from this file — `dist-test/` at runtime — to the
+  // repo root's `test/spec`, so moving the suite does not mean recounting
+  // `..` hops. `dir` then auto-discovers every fixture in it, so adding a
+  // .tsv runs it in both runtimes without touching either runner — it used
+  // to have to be named in a list, once per runtime.
+  .dir(findSpecDir(__dirname))
