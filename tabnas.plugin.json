@@ -1,0 +1,20 @@
+{
+  "$schema": "https://tabnas.dev/schema/plugin.schema.json",
+  "name": "@tabnas/toml",
+  "go": "github.com/tabnas/toml/go",
+  "description": "TOML parsing for the tabnas engine.",
+  "base": "@tabnas/jsonic",
+  "engine": "@tabnas/parser",
+  "grammar": "toml-grammar.jsonic",
+  "extensions": [
+    ".toml"
+  ],
+  "mediaTypes": [
+    "application/toml"
+  ],
+  "specDir": "test/spec",
+  "errorCodes": [],
+  "docs": "https://tabnas.dev/docs/packages",
+  "repository": "https://github.com/tabnas/toml",
+  "versionSource": "ts/package.json"
+}
