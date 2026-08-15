@@ -76,8 +76,7 @@ behaviour:
    feature surface as TS via native equivalents (string matcher, date/time
    matchers, special floats). Resolve any new grammar `@`-ref in
    `go/refs.go` `makeRefs()` (or have `stripUnsupported` remove the hook
-   if Go reimplements it natively, as it does for the string matcher),
-   and add the new fixture name to `tsvSubset`.
+   if Go reimplements it natively, as it does for the string matcher).
 3. Add/extend the shared fixture(s) in `test/spec/*.tsv` so both runtimes
    assert the new behaviour. The fixtures are the parity contract; both
    suites resolve them at `../test/spec` (TS:
@@ -191,12 +190,12 @@ the TS-only hooks natively, not by parsing less:
   so `MakeJsonic()` instances accept a BOM too, not just the `Parse`
   convenience wrapper), and `injectIDLexGuards` works around a Go-jsonic
   lexer limitation when `#ID` is expected at alt slot 1.
-- `go/toml_tsv_test.go` (`TestTSV`) iterates `tsvSubset`, which currently
-  lists **every** `.tsv` file in `test/spec` — so the Go suite runs the
-  full shared fixture set, at parity with TS (the one runner difference
-  is that Go doesn't yet assert error **codes**; see above). The
-  `tsvSubset` slice is still the gate: if you add a new `test/spec/*.tsv`
-  file, add its name to `tsvSubset` so the Go suite picks it up.
+- `go/toml_tsv_test.go` (`TestSpec`) discovers fixtures by **listing**
+  `test/spec` through `support.FindSpecDir` + `support.Runner{}.Dir`, so
+  adding a `.tsv` file runs it in both runtimes without touching either
+  runner — it used to have to be named in a per-runtime list. The Go
+  runner asserts error **codes** too, via its `MatchError` hook, with the
+  single permitted divergence gated by name in the `divergentCode` map.
 - Public API: `Parse(src, opts...)` and `MakeJsonic(opts...)` in
   `go/toml.go` (TS equivalent: `new Tabnas().use(jsonic).use(Toml)`).
   `TomlOptions` is an empty struct, reserved for future use.
@@ -314,7 +313,7 @@ Go (from `go/`):
 
 ```bash
 go build ./...
-go test -v ./...       # tsvSubset fixtures + feature/unit tests + toml-test
+go test -v ./...       # shared test/spec fixtures + feature/unit tests + toml-test
                        # (fetches the corpus itself; never skips)
 ```
 
