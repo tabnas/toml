@@ -21,9 +21,10 @@ There are two implementations that must behave identically — TypeScript
 (canonical) and a Go port. The Go port reimplements the same features
 natively (its own string matcher, context-aware date/time matchers,
 NaN/Infinity defaults, dotted keys, tables and arrays-of-tables) and
-passes the **full** shared `.tsv` fixture set. The two are kept at parity
-on those fixtures; the one known runner difference is that the Go `.tsv`
-runner does not yet assert error **codes** (see below).
+passes the **full** shared `.tsv` fixture set. Both runners assert the exact
+error **code** on an `ERROR:<code>` row. One input is still rejected with
+different codes by the two ports; it is allowed by name and guarded so the
+allowance cannot outlive the divergence (see below).
 
 ## Repository map
 
@@ -85,10 +86,25 @@ behaviour:
 4. Run both suites and confirm green.
 
 The `.tsv` fixtures use `input → expected` JSON, with error cases written
-as `ERROR:<code>`. The TS runner asserts the exact `err.code`; the Go
-runner currently only asserts that the parse fails (it does not yet check
-the code), so a shared error code is a TS-side contract until Go honours
-it.
+as `ERROR:<code>`. **Both** runners assert the exact code — TS via
+`err.code`, Go via the shared `support.Runner`'s `MatchError`. An
+`ERROR:<code>` row is therefore a cross-runtime contract, not a TS-side one.
+
+One exception, and it is deliberately narrow. `go/toml_tsv_test.go` carries
+`divergentCode`, a map from a specific input to the code the Go port answers
+where it differs from the canonical TS one:
+
+```go
+var divergentCode = map[string]string{
+	`"unterminated`: "unterminated_string",   // TypeScript says `unexpected`
+}
+```
+
+The allowance is by input, and only for the one code recorded against it —
+not "any error". `TestDivergentCodesAreStillDivergent` fails the moment an
+entry stops being needed, so a fix cannot leave a stale allowance behind.
+TypeScript is canonical, so each entry is a defect in the port rather than a
+licence for one.
 
 ## The grammar is embedded — never hand-edit the embedded block
 
