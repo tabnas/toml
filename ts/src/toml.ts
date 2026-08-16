@@ -505,7 +505,16 @@ function makeTomlStringMatcher() {
 
     let value = ''
 
-    for (; sI < srclen - 1; ) {
+    // `closed` records that the loop stopped ON the closing delimiter, which
+    // is the only legitimate way out. Without it, the exit below cannot tell a
+    // terminated string from a source that simply ran out — and it answered
+    // both with a token. See the comment there.
+    let closed = false
+
+    // `sI < srclen`, not `srclen - 1`. The old bound stopped one character
+    // short, so a string whose closing delimiter is the final character of the
+    // source was never examined, and `case undefined` below was unreachable.
+    for (; sI < srclen; ) {
       ++sI
       ++cI
 
@@ -554,6 +563,7 @@ function makeTomlStringMatcher() {
           ++cI
           ++sI
 
+          closed = true
           break
 
         case undefined:
@@ -672,6 +682,20 @@ function makeTomlStringMatcher() {
       }
 
       break
+    }
+
+    // Reaching here without the closing delimiter means the source ran out
+    // mid-string. This used to fall straight through to the token below, so an
+    // unterminated string became a VALID #ST holding whatever had been read —
+    // `a = "abc ` parsed to {a: "abc "}, with a closing quote the source never
+    // had. It was recorded as a mere error-code divergence (TypeScript
+    // `unexpected` vs Go `unterminated_string`), which hid it: the `unexpected`
+    // only appeared when the truncated token happened to leave a stray
+    // character behind, and when it did not, malformed TOML parsed silently.
+    // Go has always had this raise after its loop; this is the port catching up
+    // with it, in the direction the port was right.
+    if (!closed) {
+      return lex.bad('unterminated_string', begin, sI)
     }
 
     pnt.sI = sI

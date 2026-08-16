@@ -43,12 +43,14 @@ Fixtures are discovered by **listing the directory**, so a new `.tsv` runs
 in both runtimes at once. They used to be named in a list per runtime, and
 a fixture wired into one runtime only would have proved nothing.
 
-An `ERROR:` row now pins the error **code** in both runtimes. Go used to
-accept any rejection, which hid a real divergence: `"unterminated` is
-rejected by both, but TypeScript calls it `unexpected` and Go calls it
-`unterminated_string`. That one input is recorded in `divergentCode` in
-`go/toml_tsv_test.go` and pinned by `TestDivergentCodesAreStillDivergent`,
-which fails as soon as the allowance stops being needed.
+An `ERROR:` row pins the error **code** in both runtimes, with no allowances.
+Go used to accept any rejection, which hid a divergence on `"unterminated`:
+`unexpected` in TypeScript, `unterminated_string` in Go. Tightening the
+comparison surfaced it; running it down showed TypeScript's string matcher
+returning a valid token for an unterminated string — so the `unexpected` came
+from the grammar tripping over the one leftover character, not from any
+diagnosis, and where nothing was left over malformed TOML parsed silently.
+TypeScript is fixed; both runtimes answer `unterminated_string`.
 
 ## Rules
 

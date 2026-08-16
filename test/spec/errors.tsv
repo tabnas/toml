@@ -1,4 +1,15 @@
 input	expected
 a = 	ERROR:unexpected
 = 1	ERROR:unexpected
-"unterminated	ERROR:unexpected
+# An unterminated string is unterminated_string in BOTH runtimes. This row
+# used to pin `unexpected`, which is what TypeScript answered -- not because
+# it diagnosed anything, but because its string matcher returned a VALID
+# token for the truncated text and the leftover character then failed the
+# grammar. When no character was left over, malformed TOML parsed silently.
+"unterminated	ERROR:unterminated_string
+# The cases that used to parse: an unterminated string whose last character
+# is trailing whitespace left nothing over, so TypeScript accepted it and
+# invented the closing quote.
+a = "abc 	ERROR:unterminated_string
+a = 'abc 	ERROR:unterminated_string
+a = """abc 	ERROR:unterminated_string

@@ -90,21 +90,27 @@ as `ERROR:<code>`. **Both** runners assert the exact code — TS via
 `err.code`, Go via the shared `support.Runner`'s `MatchError`. An
 `ERROR:<code>` row is therefore a cross-runtime contract, not a TS-side one.
 
-One exception, and it is deliberately narrow. `go/toml_tsv_test.go` carries
-`divergentCode`, a map from a specific input to the code the Go port answers
-where it differs from the canonical TS one:
+There are **no** allowances: `MatchError` compares the code and nothing else.
 
-```go
-var divergentCode = map[string]string{
-	`"unterminated`: "unterminated_string",   // TypeScript says `unexpected`
-}
-```
+There used to be one, and how it was written down is worth keeping. A
+`divergentCode` map excused `"unterminated` — `unexpected` in TypeScript,
+`unterminated_string` in Go — recorded as a defect in the port, since
+TypeScript is canonical. The shape was right and the direction was wrong.
+TypeScript's string matcher was returning a **valid `#ST` token** for an
+unterminated string, so `unexpected` was not a diagnosis at all: it was the
+grammar tripping over the one character the truncated token left behind. When
+nothing was left behind — `a = "abc ` — malformed TOML **parsed silently**,
+to `{a: "abc "}`, with a closing quote the source never had.
 
-The allowance is by input, and only for the one code recorded against it —
-not "any error". `TestDivergentCodesAreStillDivergent` fails the moment an
-entry stops being needed, so a fix cannot leave a stale allowance behind.
-TypeScript is canonical, so each entry is a defect in the port rather than a
-licence for one.
+Two lessons for the next allowance anyone is tempted to add:
+
+- **Canonical is not the same as correct.** The rule that TypeScript wins is
+  about which port changes by default, not about which one is right. Here the
+  port had it right and the canonical runtime was losing data.
+- **A recorded divergence is a hypothesis, not a finding.** This one named a
+  single input and an error-code mismatch. There were five diverging inputs,
+  and the real defect was silent acceptance — invisible from the error code,
+  because the accepting cases raised no error to compare.
 
 ## The grammar is embedded — never hand-edit the embedded block
 
@@ -210,8 +216,8 @@ the TS-only hooks natively, not by parsing less:
   `test/spec` through `support.FindSpecDir` + `support.Runner{}.Dir`, so
   adding a `.tsv` file runs it in both runtimes without touching either
   runner — it used to have to be named in a per-runtime list. The Go
-  runner asserts error **codes** too, via its `MatchError` hook, with the
-  single permitted divergence gated by name in the `divergentCode` map.
+  runner asserts error **codes** too, via its `MatchError` hook, which
+  compares the code and nothing else — there are no permitted divergences.
 - Public API: `Parse(src, opts...)` and `MakeJsonic(opts...)` in
   `go/toml.go` (TS equivalent: `new Tabnas().use(jsonic).use(Toml)`).
   `TomlOptions` is an empty struct, reserved for future use.
