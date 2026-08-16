@@ -41,52 +41,18 @@ func TestSpec(t *testing.T) {
 
 		Normalize: normalizeNumbers,
 
-		// One input is rejected by the two runtimes with DIFFERENT codes.
-		// See divergentCode below: it is allowed by name, and only by name.
-		MatchError: func(err error, want string, row *support.Row) bool {
-			code := errorCode(err)
-			if code == want {
-				return true
-			}
-			// Only an input named in divergentCode, and only for the code
-			// recorded against it. `ok` matters: without it a missing entry
-			// reads as "" and would match any error this helper could not
-			// read a code from — an allowance for everything.
-			allowed, ok := divergentCode[row.Unesc(0)]
-			return ok && allowed == code
+		// The exact code, with no allowances. There used to be one, keyed by
+		// input: `"unterminated` was `unexpected` in TypeScript and
+		// `unterminated_string` here. The allowance was the right shape for a
+		// port defect and pointed the wrong way — TypeScript's string matcher
+		// returned a VALID token for an unterminated string, so what looked
+		// like a code disagreement was TypeScript accepting malformed TOML.
+		// Fixed in ts/src/toml.ts; this port needed no change, and the
+		// allowance is gone rather than inverted.
+		MatchError: func(err error, want string, _ *support.Row) bool {
+			return errorCode(err) == want
 		},
 	}.Dir(t, dir)
-}
-
-// divergentCode records, per input, the code the GO parser answers where it
-// differs from the TypeScript one the fixture names. TypeScript is
-// canonical, so each entry is a defect in this port, not a licence.
-//
-// It surfaced the moment the shared runner started comparing codes at all:
-// this suite used to accept any non-nil error, so an ERROR row asserted
-// only that the input was rejected — not that it was rejected for the same
-// reason. `"unterminated` is rejected by both, but TypeScript calls it
-// `unexpected` and Go calls it `unterminated_string`.
-//
-// TestDivergentCodesAreStillDivergent below fails as soon as an entry stops
-// being needed, so a fix cannot leave a stale allowance behind.
-var divergentCode = map[string]string{
-	`"unterminated`: "unterminated_string",
-}
-
-func TestDivergentCodesAreStillDivergent(t *testing.T) {
-	for input, want := range divergentCode {
-		_, err := MakeJsonic().Parse(input)
-		if err == nil {
-			t.Errorf("Parse(%q) no longer fails at all — remove its "+
-				"divergentCode entry", input)
-			continue
-		}
-		if got := errorCode(err); got != want {
-			t.Errorf("Parse(%q) now answers %q, not the recorded %q — "+
-				"update or remove its divergentCode entry", input, got, want)
-		}
-	}
 }
 
 // errorCode reads a parse error's code. The shared runner reads it by
