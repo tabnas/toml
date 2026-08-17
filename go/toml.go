@@ -108,9 +108,9 @@ const grammarText = `
       }
     ]
     close: [
-      { s: ['#OS' '#OS'] r: table b: 2 }
-      { s: ['#OS' '#ST #NR #ID'] r: table b: 1 }
-      { s: '#ZZ' }
+      { s: ['#OS' '#OS'] r: table b: 2 g: end }
+      { s: ['#OS' '#ST #NR #ID'] r: table b: 1 g: end }
+      { s: '#ZZ' g: end }
     ]
   }
 
@@ -128,8 +128,8 @@ const grammarText = `
       { s: '#ZZ' }
     ]
     close: [
-      { s: '#OS' b: 1 }
-      { s: '#ZZ' }
+      { s: '#OS' b: 1 g: end }
+      { s: '#ZZ' g: end }
     ]
   }
 
@@ -144,16 +144,16 @@ const grammarText = `
       { s: ['#ST #NR #ID' '#DOT'] p: dive b: 2 }
     ]
     close: [
-      { s: ['#ST #NR #ID'] b: 1 r: pair }
-      { s: ['#CA' '#ST #NR #ID'] b: 1 r: pair }
-      { s: ['#OS'] b: 1 }
-      { s: ['#CA' '#CB'] c: '@lte-pk' b: 1 }
+      { s: ['#ST #NR #ID'] b: 1 r: pair g: comma }
+      { s: ['#CA' '#ST #NR #ID'] b: 1 r: pair g: comma }
+      { s: ['#OS'] b: 1 g: end }
+      { s: ['#CA' '#CB'] c: '@lte-pk' b: 1 g: close }
     ]
   }
 
   rule: val: close: [
-    { s: ['#ST #NR #ID'] b: 1 }
-    { s: ['#OS'] b: 1 }
+    { s: ['#ST #NR #ID'] b: 1 g: end }
+    { s: ['#OS'] b: 1 g: end }
   ]
 
   rule: elem: close: [
