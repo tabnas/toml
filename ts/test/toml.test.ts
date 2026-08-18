@@ -86,8 +86,14 @@ describe('toml', () => {
     const toml = new Tabnas().use(jsonic).use(Toml)
     const BOM = '\uFEFF'
 
-    equal(toml.parse(BOM + 'a = 1'), { a: 1 })
-    equal(toml.parse(BOM + '# c\na = 1'), { a: 1 })
+    // Round-tripped through JSON before comparing: TOML nodes carry no
+    // prototype (the core's convention, and what keeps a table named
+    // __proto__ from reaching Object.prototype), and deepStrictEqual
+    // compares prototypes. The .tsv suites already normalize this way.
+    const norm = (v: any) => JSON.parse(JSON.stringify(v))
+
+    equal(norm(toml.parse(BOM + 'a = 1')), { a: 1 })
+    equal(norm(toml.parse(BOM + '# c\na = 1')), { a: 1 })
 
     let mid: any = null
     try {

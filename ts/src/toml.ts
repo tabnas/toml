@@ -181,6 +181,20 @@ const grammarText = `
 // --- END EMBEDDED toml-grammar.jsonic ---
 
 // Plugin implementation.
+// TOML allocates every map and table here rather than leaning on the core's
+// allocator, so it must follow the core's convention too: nodes carry no
+// prototype ("no prototype, like JSON" - @tabnas/parser builtins).
+//
+// With a plain `{}` literal a table named __proto__ is not an ordinary key.
+// `node['__proto__']` reads back Object.prototype, which is truthy, so the
+// `|| {}` reuse guard below hands that back as the table node and every pair
+// in it is written onto Object.prototype - polluting every object in the
+// process from a single parsed document. Allocating without a prototype makes
+// __proto__ an ordinary own key, which is what jsonic, json5, yaml and zon
+// already do.
+const node = () => Object.create(null)
+
+
 const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
   // Human descriptions for TOML tokens, surfaced in railroad diagram legends
   // (read off the live config by @tabnas/railroad).
@@ -269,7 +283,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
 
     // State actions (auto-applied by fnref via @<rule>-<state> convention).
     '@toml-bo': (r: Rule) => {
-      r.node = {}
+      r.node = node()
     },
 
     // Allocate this map's node up front, mirroring jsonic Go's
@@ -282,7 +296,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     // and inline-table alike) a real object; @table-bc copies the child map
     // into the table node, so a fresh node per map is consistent.
     '@map-bo': (r: Rule) => {
-      r.node = {}
+      r.node = node()
     },
 
     '@table-bo': (r: Rule) => {
@@ -312,9 +326,9 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       if (r.n.table_array && Array.isArray(r.parent.node[key])) {
         let arr = r.parent.node[key]
         let last = arr[arr.length - 1]
-        r.node = last ? last : (arr.push({}), arr[arr.length - 1])
+        r.node = last ? last : (arr.push(node()), arr[arr.length - 1])
       } else {
-        r.node = r.parent.node[key] = r.parent.node[key] || {}
+        r.node = r.parent.node[key] = r.parent.node[key] || node()
       }
     },
 
@@ -323,17 +337,17 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       if (Array.isArray(r.prev.node)) {
         let arr = r.prev.node
         let last = arr[arr.length - 1]
-        last = last ? last : (arr.push({}), arr[arr.length - 1])
-        r.node = last[key] = last[key] || {}
+        last = last ? last : (arr.push(node()), arr[arr.length - 1])
+        r.node = last[key] = last[key] || node()
       } else {
-        r.node = r.prev.node[key] = r.prev.node[key] || {}
+        r.node = r.prev.node[key] = r.prev.node[key] || node()
       }
     },
 
     '@table-key-cs-head': (r: any) => {
       let key = r.o0.val
       r.parent.node[key] = r.node =
-        r.parent.node[key] || (r.n.table_array ? [] : {})
+        r.parent.node[key] || (r.n.table_array ? [] : node())
     },
 
     '@table-key-cs-tail': (r: any) => {
@@ -341,16 +355,16 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       if (Array.isArray(r.prev.node)) {
         let arr = r.prev.node
         let last = arr[arr.length - 1]
-        last = last ? last : (arr.push({}), arr[arr.length - 1])
-        r.node = last[key] = last[key] || {}
+        last = last ? last : (arr.push(node()), arr[arr.length - 1])
+        r.node = last[key] = last[key] || node()
       } else {
         r.node = r.prev.node[key] =
-          r.prev.node[key] || (r.n.table_array ? [] : {})
+          r.prev.node[key] || (r.n.table_array ? [] : node())
       }
     },
 
     '@table-cs-push': (r: any) => {
-      r.prev.node.push((r.node = {}))
+      r.prev.node.push((r.node = node()))
     },
 
     '@pair-key-set': (r: Rule) => {
@@ -358,7 +372,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     },
 
     '@dive-key-dot': (r: any) => {
-      r.parent.node[r.o0.val] = r.node = r.parent.node[r.o0.val] || {}
+      r.parent.node[r.o0.val] = r.node = r.parent.node[r.o0.val] || node()
     },
 
     // Conditions.
