@@ -53,11 +53,13 @@ func isKeyContext(idTin jsonic.Tin, rule *jsonic.Rule) bool {
 // and either (a) emits a #ID token so a bare-key position can claim the
 // text, or (b) emits a #VL token carrying a *TomlTime for value positions.
 // The `toVal` adapter turns regex match groups into the TomlTime returned
-// by @isodate-val / @localtime-val.
+// by @isodate-val / @localtime-val, and `inRange` rejects a value whose
+// shape matched but whose components cannot denote a real instant.
 func makeDateMatcher(
 	idTin jsonic.Tin,
 	re *regexp.Regexp,
 	toVal func([]string) any,
+	inRange func(string) bool,
 ) jsonic.LexMatcher {
 	return func(lex *jsonic.Lex, rule *jsonic.Rule) *jsonic.Token {
 		pnt := lex.Cursor()
@@ -72,8 +74,15 @@ func makeDateMatcher(
 		mlen := len(msrc)
 		var tkn *jsonic.Token
 		if isKeyContext(idTin, rule) {
+			// A bare key that merely looks like a date is not a date, so its
+			// components are not required to be in range: `2006-01-32 = 1`
+			// defines a key, and rejecting it here would be a range check
+			// applied to a name.
 			tkn = lex.Token("#ID", idTin, msrc, msrc)
 		} else {
+			if !inRange(msrc) {
+				return lex.Bad("invalid_datetime")
+			}
 			tkn = lex.Token("#VL", jsonic.TinVL, toVal(m), msrc)
 		}
 		pnt.SI += mlen
@@ -89,10 +98,27 @@ func makeDateMatcher(
 // text they would have matched first.
 func registerDateMatchers(j *jsonic.Jsonic) {
 	idTin := j.Token("#ID")
-	isodate := makeDateMatcher(idTin, isodateRe, isodateVal)
-	localtime := makeDateMatcher(idTin, localtimeRe, localtimeVal)
+	isodate := makeDateMatcher(idTin, isodateRe, isodateVal, isodateInRange)
+	localtime := makeDateMatcher(
+		idTin, localtimeRe, localtimeVal, localtimeInRange)
 
 	j.SetOptions(jsonic.Options{
+		// A code with no template renders as "unknown error:
+		// invalid_datetime", which tells the author nothing. Kept
+		// character-for-character in step with the TS port's registration in
+		// ts/src/toml.ts, so a document rejected by both ports is rejected
+		// with the same words.
+		Error: map[string]string{
+			"invalid_datetime": "date or time is out of range",
+		},
+		Hint: map[string]string{
+			"invalid_datetime": `
+The value has the shape of a date or time, but one of its components is out
+of range: month 1-12, day 1 to the length of that month, hour 0-23, minute
+and second 0-59 (a second may be 60, for a leap second), and the same limits
+again for a +hh:mm offset. February is checked against the actual year, so
+2100-02-29 is rejected - 2100 is not a leap year.`,
+		},
 		Lex: &jsonic.LexOptions{
 			Match: map[string]*jsonic.MatchSpec{
 				"tomlisodate": {

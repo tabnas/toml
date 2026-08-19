@@ -31,3 +31,30 @@ a = "\xAg"	ERROR:invalid_ascii
 a = "\xg1"	ERROR:invalid_ascii
 a = "\xA"	ERROR:invalid_ascii
 a = "\UFFFFFFFF"	ERROR:invalid_unicode
+# Date and time RANGE, audit item T6 -- the largest divergence class in this
+# repo and the only one where the two ports agreed on the DECISION and
+# disagreed on the VALUE. Both accepted every row below. TypeScript built a JS
+# Date, which never fails: 1988-02-30 rolled over to 1988-03-01, and
+# 2006-01-32 became an Invalid Date that serialized to null -- the value
+# destroyed outright, no error anywhere. Go kept the source text, so it
+# round-tripped the impossible date back out unchanged. 38 value
+# disagreements, and the shared fixtures contained ZERO date/time inputs,
+# which is why nothing caught it.
+#
+# These pin the DECISION, which is now identical in both ports. The container
+# shape still differs (Date vs {Kind,Src}) and is a representation
+# difference, deliberately not pinned here.
+d = 2006-13-01T00:00:00-00:00	ERROR:invalid_datetime
+d = 2007-00-01T00:00:00-00:00	ERROR:invalid_datetime
+d = 2006-01-32T00:00:00-00:00	ERROR:invalid_datetime
+d = 2006-01-00T00:00:00-00:00	ERROR:invalid_datetime
+# 1988 IS a leap year and February still has no 30th.
+d = 1988-02-30T15:15:15Z	ERROR:invalid_datetime
+# 2100 is NOT a leap year: divisible by 100, not by 400. A naive %4 check
+# accepts this row, so it is the one that pins the century rule.
+d = 2100-02-29T15:15:15Z	ERROR:invalid_datetime
+d = 2006-01-01T24:00:00-00:00	ERROR:invalid_datetime
+d = 2006-01-01T00:60:00-00:00	ERROR:invalid_datetime
+d = 2006-01-01T00:00:61-00:00	ERROR:invalid_datetime
+d = 1985-06-18 17:04:07+25:00	ERROR:invalid_datetime
+d = 1985-06-18 17:04:07+12:60	ERROR:invalid_datetime

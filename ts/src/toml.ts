@@ -277,6 +277,78 @@ function tableAt(
 
 
 
+// Date and time RANGE validation.
+//
+// Both ports matched date/time values on SHAPE alone — `^\d\d\d\d-\d\d-\d\d`
+// says nothing about whether 13 is a month or 32 a day. Neither port noticed,
+// and each mishandled the result in its own way. This one built a JS `Date`,
+// which never fails: `1988-02-30` rolled over to `1988-03-01`, and
+// `2006-01-32` became an Invalid Date that serialized to `null` — the value
+// destroyed outright. Go kept the source text, so it round-tripped the
+// impossible date back out unchanged. Twelve invalid documents, accepted by
+// both, with 38 value disagreements between them.
+//
+// Range-checking here is what makes the two ports agree, because it removes
+// the value they were disagreeing about rather than choosing between them.
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+function daysInMonth(year: number, month: number): number {
+  if (2 !== month) {
+    return MONTH_DAYS[month - 1]
+  }
+  // Proleptic Gregorian, the calendar RFC 3339 specifies. 2100 is NOT a leap
+  // year, which is exactly what the corpus's feb-29 document tests.
+  const leap = (0 === year % 4 && 0 !== year % 100) || 0 === year % 400
+  return leap ? 29 : 28
+}
+
+// Seconds may be 60: RFC 3339 permits a positive leap second, and TOML
+// inherits its date-time grammar from it. 61 is the corpus's second-over.
+function timeInRange(hour: number, minute: number, second: number): boolean {
+  return hour <= 23 && minute <= 59 && second <= 60
+}
+
+// The capture form of isodateRe. Anchored at BOTH ends so it can only agree
+// with what that regex already matched; a mismatch here means the two have
+// drifted apart, and the value is let through rather than silently rejected
+// on a shape this function does not actually understand.
+const ISODATE_PARTS =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:[Zz]|[-+](\d{2}):(\d{2}))?)?$/
+
+function isodateInRange(text: string): boolean {
+  const p = text.match(ISODATE_PARTS)
+  if (!p) {
+    return true
+  }
+
+  const [year, month, day] = [p[1], p[2], p[3]].map((d) => parseInt(d, 10))
+  if (month < 1 || 12 < month || day < 1 || daysInMonth(year, month) < day) {
+    return false
+  }
+
+  // No time part: the date alone is in range.
+  if (null == p[4]) {
+    return true
+  }
+  if (!timeInRange(+p[4], +p[5], null == p[6] ? 0 : +p[6])) {
+    return false
+  }
+
+  // Offset, when written as +hh:mm rather than Z.
+  return null == p[7] || (+p[7] <= 23 && +p[8] <= 59)
+}
+
+const LOCALTIME_PARTS = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/
+
+function localtimeInRange(text: string): boolean {
+  const p = text.match(LOCALTIME_PARTS)
+  if (!p) {
+    return true
+  }
+  return timeInRange(+p[1], +p[2], null == p[3] ? 0 : +p[3])
+}
+
+
 const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
   // Human descriptions for TOML tokens, surfaced in railroad diagram legends
   // (read off the live config by @tabnas/railroad).
@@ -333,6 +405,10 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
         /^\d\d\d\d-\d\d-\d\d([Tt ]\d\d:\d\d(:\d\d(\.\d+)?)?([Zz]|[-+]\d\d:\d\d)?)?/,
       )
       if (!m) return null
+      const pnt = lex.pnt
+      if (!isodateInRange(m[0])) {
+        return lex.bad('invalid_datetime', pnt.sI, pnt.sI + m[0].length)
+      }
       const date: any = new Date(m[0])
       date.__toml__ = {
         kind:
@@ -341,7 +417,6 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
           (null == m[1] ? '' : '-time'),
         src: m[0],
       }
-      const pnt = lex.pnt
       const tkn = lex.token('#VL', date, m[0], pnt)
       pnt.sI += m[0].length
       pnt.cI += m[0].length
@@ -352,11 +427,14 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       if (isKeyContext(lex, rule)) return null
       const m = lex.fwd.match(/^\d\d:\d\d(:\d\d(\.\d+)?)?/)
       if (!m) return null
+      const pnt = lex.pnt
+      if (!localtimeInRange(m[0])) {
+        return lex.bad('invalid_datetime', pnt.sI, pnt.sI + m[0].length)
+      }
       const date: any = new Date(
         60 * 60 * 1000 + new Date('1970-01-01 ' + m[0]).getTime(),
       )
       date.__toml__ = { kind: 'local-time', src: m[0] }
-      const pnt = lex.pnt
       const tkn = lex.token('#VL', date, m[0], pnt)
       pnt.sI += m[0].length
       pnt.cI += m[0].length
@@ -518,6 +596,8 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     error: {
       toml_key_conflict:
         'cannot define {key}, {why}',
+      invalid_datetime:
+        'date or time is out of range',
     },
     hint: {
       toml_key_conflict: `
@@ -525,6 +605,12 @@ TOML does not allow a key to be redefined, and a key that already holds a
 value is not a table you can add to. This usually means the same name was
 used twice - as a value and then as a table or table-array header, or twice
 inside one inline table.`,
+      invalid_datetime: `
+The value has the shape of a date or time, but one of its components is out
+of range: month 1-12, day 1 to the length of that month, hour 0-23, minute
+and second 0-59 (a second may be 60, for a leap second), and the same limits
+again for a +hh:mm offset. February is checked against the actual year, so
+2100-02-29 is rejected - 2100 is not a leap year.`,
     },
     lex: {
       match: {

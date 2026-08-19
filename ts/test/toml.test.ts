@@ -448,15 +448,24 @@ describe('toml', () => {
 // ratchet, not a target: raise them when the grammar tightens, never
 // lower them. See test('toml-invalid').
 //
-// RAISED 2026-08-19, same corpus pin, after key-conflict detection replaced
-// uncaught TypeErrors with a `toml_key_conflict` diagnosis and closed the
-// array-of-tables redefinition it exposed. Measured 247 rejected / 247
+// RAISED 2026-08-19, same corpus pin, across one branch of parity repairs:
+// strict escape validation, key-conflict diagnosis, array-of-tables
+// redefinition, and date/time range checking. Measured 278 rejected / 278
 // diagnosed / 0 internal crashes, from 242 / 227 / 15. The diagnosed floor
-// moves furthest because that is what the change does: the crashes were
+// moves furthest because that is what these changes do: the crashes were
 // already counted as rejections, just not conformant ones.
+//
+// The Go half of this repo measures 269 / 269 on the SAME corpus, and its
+// floors live in go/toml_valid_test.go. Two independently-measured floors
+// over one corpus is the mechanism that hid these divergences in the first
+// place -- a floor is a lower bound, so it absorbs drift silently, and
+// nothing compares the two numbers. The 9-document gap is the key-conflict
+// class, which Go cannot yet diagnose. Replacing both floors with one shared
+// artefact is tracked as a separate instrument repair; until then, the two
+// numbers are recorded HERE, together, so a reader sees the gap.
 const INVALID_TOTAL = 509
-const INVALID_FLOOR = 247
-const INVALID_DIAGNOSED_FLOOR = 247
+const INVALID_FLOOR = 278
+const INVALID_DIAGNOSED_FLOOR = 278
 
 // How many individual failures to print; the assertion message is not
 // truncated. Only bounds console noise.

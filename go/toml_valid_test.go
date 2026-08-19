@@ -48,10 +48,25 @@ var fetchScript = filepath.Join("..", "scripts", "fetch-toml-test.sh")
 // BurntSushi/toml-test @ 9eef1b9 with the Go parser at VERSION 0.5.0.
 // A ratchet, not a target: raise them when the grammar tightens, never
 // lower them. See TestTomlInvalid.
+//
+// RAISED 2026-08-19, same corpus pin, after strict \U range validation and
+// date/time range checking. Measured 269 rejected / 269 diagnosed / 0
+// internal panics, from 238 / 238 / 0.
+//
+// The TypeScript half measures 278 / 278 on the SAME corpus, and its floors
+// live in ts/test/toml.test.ts. Two independently-measured floors over one
+// corpus is the mechanism that hid this repo's divergences in the first
+// place -- a floor is a lower bound, so it absorbs drift silently, and
+// nothing compares the two numbers. The 9-document gap is the key-conflict
+// class: this port converts every action panic into an internal error by
+// design, so that check has to move into a grammar condition before it can
+// be made here. Replacing both floors with one shared artefact is tracked
+// as a separate instrument repair; until then the two numbers are recorded
+// HERE, together, so a reader sees the gap.
 const (
 	invalidTotal          = 509
-	invalidFloor          = 230
-	invalidDiagnosedFloor = 230
+	invalidFloor          = 269
+	invalidDiagnosedFloor = 269
 )
 
 // maxReport bounds how many individual failures are printed; the
