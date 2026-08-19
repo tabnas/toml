@@ -4,7 +4,7 @@
 // grammar that the embedded grammar text is authored in. Engine types
 // (Plugin, Rule, Lex) and the EMPTY constant come from @tabnas/parser.
 import { Tabnas, Rule, Lex, Plugin, EMPTY } from '@tabnas/parser'
-import { jsonic } from '@tabnas/jsonic'
+import { jsonic, JsonicError } from '@tabnas/jsonic'
 
 // See defaults below for commentary.
 type TomlOptions = {}
@@ -194,6 +194,60 @@ const grammarText = `
 // already do.
 const node = () => Object.create(null)
 
+// The last table of an array-of-tables, or a DIAGNOSED refusal to append to
+// something that is not an array. `[[a]]` after `a = 1` raised
+// "r.prev.node.push is not a function" — the same crash class as tableAt's,
+// reached through .push instead of an assignment.
+function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
+  const existing = container[key]
+  if (Array.isArray(existing)) return existing
+  if (null == existing) return (container[key] = [])
+
+  throw new JsonicError(
+    'toml_key_conflict',
+    { key, why: `it already has the value ${JSON.stringify(existing)}` },
+    ctx.t0, r, ctx)
+}
+
+// A table node, or a DIAGNOSED refusal to descend into something that is not
+// one.
+//
+// TOML forbids redefining a key, so `a = {b = 1, b.c = 2}` and
+// `a = 1` + `[a.b]` are invalid documents. Neither port said so. TypeScript
+// walked into the scalar and JavaScript raised the assignment itself —
+// "Cannot create property 'c' on number '1'" — an uncaught TypeError with no
+// code, no position and no mention of TOML. AGENTS.md is explicit that this
+// still counts as a rejection but NOT a conformant one ("a diagnosed
+// rejection is a real parse error ... anything else is an internal crash"),
+// and that turning a crash into a diagnosis is the point: it raises
+// INVALID_DIAGNOSED_FLOOR.
+function tableAt(container: any, key: string, r: any, ctx: any): any {
+  const existing = container[key]
+
+  // An existing OBJECT — table or array — passes straight through, exactly as
+  // the `container[key] || node()` this replaces did. An array here is
+  // legitimate: `[[x]]` followed by `[x.y]` descends into the array-of-tables,
+  // and four valid documents in the corpus do precisely that. Only a SCALAR is
+  // a conflict, which is the crash this repairs and nothing wider.
+  //
+  // Object.create(null) has no prototype, so `instanceof` and `constructor`
+  // are both unavailable — hence the shape test.
+  if (null != existing && 'object' === typeof existing) {
+    return existing
+  }
+  if (null == existing) {
+    return (container[key] = node())
+  }
+
+  throw new JsonicError(
+    'toml_key_conflict',
+    {
+      key,
+      why: `it already has the value ${JSON.stringify(existing)}`,
+    },
+    ctx.t0, r, ctx)
+}
+
 
 const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
   // Human descriptions for TOML tokens, surfaced in railroad diagram legends
@@ -321,49 +375,63 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     },
 
     // Alt actions.
-    '@table-dive-start': (r: any) => {
+    '@table-dive-start': (r: any, ctx: any) => {
       let key = r.o0.val
       if (r.n.table_array && Array.isArray(r.parent.node[key])) {
         let arr = r.parent.node[key]
         let last = arr[arr.length - 1]
         r.node = last ? last : (arr.push(node()), arr[arr.length - 1])
       } else {
-        r.node = r.parent.node[key] = r.parent.node[key] || node()
+        r.node = tableAt(r.parent.node, key, r, ctx)
       }
     },
 
-    '@table-dive-mid': (r: any) => {
+    '@table-dive-mid': (r: any, ctx: any) => {
       let key = r.o0.val
       if (Array.isArray(r.prev.node)) {
         let arr = r.prev.node
         let last = arr[arr.length - 1]
         last = last ? last : (arr.push(node()), arr[arr.length - 1])
-        r.node = last[key] = last[key] || node()
+        r.node = tableAt(last, key, r, ctx)
       } else {
-        r.node = r.prev.node[key] = r.prev.node[key] || node()
+        r.node = tableAt(r.prev.node, key, r, ctx)
       }
     },
 
-    '@table-key-cs-head': (r: any) => {
+    '@table-key-cs-head': (r: any, ctx: any) => {
       let key = r.o0.val
-      r.parent.node[key] = r.node =
-        r.parent.node[key] || (r.n.table_array ? [] : node())
+      r.node = r.n.table_array
+        ? arrayAt(r.parent.node, key, r, ctx)
+        : tableAt(r.parent.node, key, r, ctx)
     },
 
-    '@table-key-cs-tail': (r: any) => {
+    '@table-key-cs-tail': (r: any, ctx: any) => {
       let key = r.o0.val
       if (Array.isArray(r.prev.node)) {
         let arr = r.prev.node
         let last = arr[arr.length - 1]
         last = last ? last : (arr.push(node()), arr[arr.length - 1])
-        r.node = last[key] = last[key] || node()
+        r.node = tableAt(last, key, r, ctx)
       } else {
-        r.node = r.prev.node[key] =
-          r.prev.node[key] || (r.n.table_array ? [] : node())
+        r.node = r.n.table_array
+          ? arrayAt(r.prev.node, key, r, ctx)
+          : tableAt(r.prev.node, key, r, ctx)
       }
     },
 
-    '@table-cs-push': (r: any) => {
+    '@table-cs-push': (r: any, ctx: any) => {
+      // `[[a]]` where `a` is already a scalar: .push is not a function, and
+      // that was the raw TypeError. The array itself is produced by
+      // arrayAt above, so reaching a non-array here means the key conflicts.
+      if (!Array.isArray(r.prev.node)) {
+        throw new JsonicError(
+          'toml_key_conflict',
+          {
+            key: r.o0 ? r.o0.val : '',
+            why: `it already has the value ${JSON.stringify(r.prev.node)}`,
+          },
+          ctx.t0, r, ctx)
+      }
       r.prev.node.push((r.node = node()))
     },
 
@@ -371,8 +439,8 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       r.u.key = r.o0.val
     },
 
-    '@dive-key-dot': (r: any) => {
-      r.parent.node[r.o0.val] = r.node = r.parent.node[r.o0.val] || node()
+    '@dive-key-dot': (r: any, ctx: any) => {
+      r.node = tableAt(r.parent.node, r.o0.val, r, ctx)
     },
 
     // Conditions.
@@ -416,6 +484,20 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
   // BOM anywhere else is still the error it should be. The Go port does
   // the same via registerBOMMatcher.
   tn.options({
+    // A code with no template renders as "unknown error: toml_key_conflict",
+    // which tells the author nothing and would make the diagnosis this
+    // change adds barely better than the TypeError it replaces.
+    error: {
+      toml_key_conflict:
+        'cannot define {key}, {why}',
+    },
+    hint: {
+      toml_key_conflict: `
+TOML does not allow a key to be redefined, and a key that already holds a
+value is not a table you can add to. This usually means the same name was
+used twice - as a value and then as a table or table-array header, or twice
+inside one inline table.`,
+    },
     lex: {
       match: {
         bom: { order: 5e5, make: makeBomMatcher },

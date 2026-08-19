@@ -365,6 +365,70 @@ describe('toml', () => {
       `${INVALID_DIAGNOSED_FLOOR}. A rejection that is really an internal ` +
       'crash does not count as conformance.')
   })
+
+  // Key conflicts are DIAGNOSED, not crashes.
+  //
+  // TOML forbids redefining a key, and a key that already holds a value is
+  // not a table you can descend into or an array you can append to. This port
+  // used to walk in anyway and let JavaScript raise the assignment itself:
+  // "Cannot create property 'c' on number '1'", or "r.prev.node.push is not a
+  // function" for the array-of-tables form. Uncaught TypeErrors — no code, no
+  // position, no mention of TOML.
+  //
+  // AGENTS.md counts those as rejections but NOT conformant ones ("a
+  // diagnosed rejection is a real parse error ... anything else is an
+  // internal crash"), and says turning a crash into a diagnosis is the point.
+  // It is what raises INVALID_DIAGNOSED_FLOOR, 212 -> 245, above.
+  //
+  // TS-LOCAL rather than a shared .tsv row, on purpose. The Go port still
+  // ACCEPTS these documents and cannot yet reject them with this code: its
+  // engine converts every action panic into an `internal` error by design
+  // (parser/go/parser.go, "parsing never panics, whatever the input"), so the
+  // check has to move into a grammar CONDITION before the two ports can share
+  // a row. Named in the PR as follow-up; pinning a row both ports cannot pass
+  // would just be a red build.
+  test('key-conflict-is-diagnosed', () => {
+    const toml = new Tabnas().use(jsonic).use(Toml)
+    const norm = (v: any) => JSON.parse(JSON.stringify(v))
+
+    // Each of these crashed with an uncaught TypeError before the repair.
+    const conflicts = [
+      'a = {b = 1, b.c = 2}',
+      'a = {b = "s", b.c = 2}',
+      'a = 1\n[a.b]\nc = 2',
+      'a = 1\n[[a]]\nb = 2',
+      '[a]\nb = 1\n[[a.b]]\nc = 2',
+    ]
+    for (const src of conflicts) {
+      let caught: any = null
+      try {
+        toml.parse(src)
+      }
+      catch (e: any) {
+        caught = e
+      }
+
+      ok(null != caught, `${JSON.stringify(src)}: expected a rejection`)
+      equal(caught.code, 'toml_key_conflict',
+        `${JSON.stringify(src)}: rejected as ` +
+        `${caught.code ?? caught.constructor.name} — a rejection carrying no ` +
+        'code is the uncaught crash this replaced, not a diagnosis')
+    }
+
+    // Controls. Descending into an existing TABLE, or into the last element
+    // of an existing array-of-tables, is legitimate and must NOT read as a
+    // conflict: four valid corpus documents do exactly this, and a first cut
+    // of the check rejected all four.
+    const allowed: [string, any][] = [
+      ['a = {b = 1, c = 2}', { a: { b: 1, c: 2 } }],
+      ['a = {b.c = 1, b.d = 2}', { a: { b: { c: 1, d: 2 } } }],
+      ['[[x]]\ny = 1\n[x.z]\nw = 2', { x: [{ y: 1, z: { w: 2 } }] }],
+    ]
+    for (const [src, want] of allowed) {
+      equal(norm(toml.parse(src)), want,
+        `${JSON.stringify(src)} must still parse`)
+    }
+  })
 })
 
 
@@ -372,9 +436,15 @@ describe('toml', () => {
 // BurntSushi/toml-test @ 9eef1b9 with @tabnas/toml at 0.5.0. These are a
 // ratchet, not a target: raise them when the grammar tightens, never
 // lower them. See test('toml-invalid').
+//
+// RAISED 2026-08-19, same corpus pin, after key-conflict detection replaced
+// six uncaught TypeErrors with a `toml_key_conflict` diagnosis. Measured
+// 245 rejected / 245 diagnosed / 0 internal crashes, from 242 / 227 / 15.
+// The diagnosed floor moves furthest because that is what the change does:
+// the crashes were already counted as rejections, just not conformant ones.
 const INVALID_TOTAL = 509
-const INVALID_FLOOR = 227
-const INVALID_DIAGNOSED_FLOOR = 212
+const INVALID_FLOOR = 245
+const INVALID_DIAGNOSED_FLOOR = 245
 
 // How many individual failures to print; the assertion message is not
 // truncated. Only bounds console noise.
