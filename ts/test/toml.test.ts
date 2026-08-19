@@ -6,6 +6,8 @@ import Path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { deepStrictEqual as equal, ok } from 'node:assert/strict'
 
+import { loadSpec } from '@tabnas/support'
+
 import { Tabnas } from '@tabnas/parser'
 import { jsonic } from '@tabnas/jsonic'
 import { Toml } from '..'
@@ -31,9 +33,10 @@ import { Toml } from '..'
 // Both halves are now exercised:
 //
 //   valid/    must parse AND produce the correct value. Asserted at 100%.
-//   invalid/  must be rejected. Asserted against a measured FLOOR (see
-//             INVALID_FLOOR below), because the parser does not reject
-//             them all yet and a floor is what ratchets.
+//   invalid/  must be rejected. The parser does not reject them all yet, so
+//             this is asserted against an EXACT measured count kept in
+//             test/conformance.tsv — one file, both runtimes. See that
+//             file's header for why exact and not a floor.
 
 const SUITE_URL = 'https://github.com/BurntSushi/toml-test'
 const SUITE_PIN = '9eef1b959e0449d41a31d4e4e0a839faee534b36'
@@ -300,9 +303,9 @@ describe('toml', () => {
 
     // Guard against the corpus silently emptying out (a bad clone, a
     // moved directory): a green run must have actually run the fixtures.
-    ok(found.length >= INVALID_TOTAL,
+    ok(found.length >= CONFORMANCE.total,
       `toml-test invalid suite looks truncated: ${found.length} fixtures ` +
-      `found, expected at least ${INVALID_TOTAL}`)
+      `found, expected at least ${CONFORMANCE.total}`)
 
     let rejected = 0
     let diagnosed = 0
@@ -352,18 +355,32 @@ describe('toml', () => {
       console.log(`  ...and ${accepted.length - MAX_REPORT} more wrongly accepted`)
     }
 
-    ok(rejected >= INVALID_FLOOR,
-      `BurntSushi/toml-test invalid suite REGRESSED: ${rejected} of ` +
-      `${found.length} rejected, floor is ${INVALID_FLOOR} ` +
-      `(suite ${SUITE_URL} @ ${SUITE_PIN}). Documents that must be ` +
-      'rejected are now being accepted. Raise the floor when the grammar ' +
-      'improves; never lower it to make this pass.')
+    // Exact, not a floor. A floor absorbs degradation silently: the
+    // diagnosed floor this replaces sat 11 below its own measured value, so
+    // eleven documents could have decayed from a diagnosed error into an
+    // internal crash with the build still green.
+    const where = `(suite ${SUITE_URL} @ ${SUITE_PIN}, ` +
+      'counts in test/conformance.tsv)'
 
-    ok(diagnosed >= INVALID_DIAGNOSED_FLOOR,
-      `BurntSushi/toml-test invalid suite REGRESSED: only ${diagnosed} of ` +
-      `${found.length} rejections are diagnosed parse errors, floor is ` +
-      `${INVALID_DIAGNOSED_FLOOR}. A rejection that is really an internal ` +
-      'crash does not count as conformance.')
+    equal(rejected, CONFORMANCE.rejected,
+      `BurntSushi/toml-test invalid suite MOVED: ${rejected} of ` +
+      `${found.length} rejected, test/conformance.tsv says ` +
+      `${CONFORMANCE.rejected} ${where}. Fewer means documents that must be ` +
+      'rejected are now accepted — do not edit the file to make this pass. ' +
+      'More means the grammar improved: re-measure BOTH runtimes and update ' +
+      'that one file.')
+
+    equal(diagnosed, CONFORMANCE.diagnosed,
+      `BurntSushi/toml-test invalid suite MOVED: ${diagnosed} of ` +
+      `${found.length} rejections are diagnosed parse errors, ` +
+      `test/conformance.tsv says ${CONFORMANCE.diagnosed} ${where}. A ` +
+      'rejection that is really an internal crash does not count as ' +
+      'conformance.')
+
+    equal(rejected - diagnosed, CONFORMANCE.crashes,
+      `BurntSushi/toml-test invalid suite MOVED: ${rejected - diagnosed} ` +
+      `rejections are internal crashes, test/conformance.tsv says ` +
+      `${CONFORMANCE.crashes} ${where}.`)
   })
 
   // Key conflicts are DIAGNOSED, not crashes.
@@ -378,7 +395,7 @@ describe('toml', () => {
   // AGENTS.md counts those as rejections but NOT conformant ones ("a
   // diagnosed rejection is a real parse error ... anything else is an
   // internal crash"), and says turning a crash into a diagnosis is the point.
-  // It is what raises INVALID_DIAGNOSED_FLOOR, 212 -> 245, above.
+  // It is what raised the diagnosed count in test/conformance.tsv.
   //
   // TS-LOCAL rather than a shared .tsv row, on purpose. The Go port still
   // ACCEPTS these documents and cannot yet reject them with this code: its
@@ -443,29 +460,62 @@ describe('toml', () => {
 })
 
 
-// Floors for the invalid half, MEASURED on 2026-08-09 against
-// BurntSushi/toml-test @ 9eef1b9 with @tabnas/toml at 0.5.0. These are a
-// ratchet, not a target: raise them when the grammar tightens, never
-// lower them. See test('toml-invalid').
+// The invalid-half conformance counts, read from `test/conformance.tsv` at
+// the repo root — the SAME file `go/toml_valid_test.go` reads, through the
+// same @tabnas/support loader.
 //
-// RAISED 2026-08-19, same corpus pin, across one branch of parity repairs:
-// strict escape validation, key-conflict diagnosis, array-of-tables
-// redefinition, and date/time range checking. Measured 278 rejected / 278
-// diagnosed / 0 internal crashes, from 242 / 227 / 15. The diagnosed floor
-// moves furthest because that is what these changes do: the crashes were
-// already counted as rejections, just not conformant ones.
-//
-// The Go half of this repo measures 269 / 269 on the SAME corpus, and its
-// floors live in go/toml_valid_test.go. Two independently-measured floors
-// over one corpus is the mechanism that hid these divergences in the first
-// place -- a floor is a lower bound, so it absorbs drift silently, and
-// nothing compares the two numbers. The 9-document gap is the key-conflict
-// class, which Go cannot yet diagnose. Replacing both floors with one shared
-// artefact is tracked as a separate instrument repair; until then, the two
-// numbers are recorded HERE, together, so a reader sees the gap.
-const INVALID_TOTAL = 509
-const INVALID_FLOOR = 278
-const INVALID_DIAGNOSED_FLOOR = 278
+// They used to be two constants here and two more in the Go suite, all four
+// commented "MEASURED on 2026-08-09" against the same pinned corpus, reading
+// 227/212 and 230/230, with nothing comparing them. See that file's header
+// for why they are now exact rather than floors, and for what the 9-document
+// gap between the two runtimes is.
+const CONFORMANCE = readConformance('ts')
+
+function readConformance(runtime: string) {
+  const spec = loadSpec(Path.join(findRepoRoot(), 'test', 'conformance.tsv'))
+  const row = spec.rows.find((r: any) => runtime === r.named('runtime'))
+
+  // A missing row must fail loudly. Defaulting to zero here would make every
+  // assertion below trivially true, which is the shape of bug this whole
+  // file exists to catch.
+  if (!row) {
+    throw new Error(
+      `test/conformance.tsv has no row for runtime ${JSON.stringify(runtime)}`)
+  }
+
+  const num = (name: string) => {
+    const raw = row.named(name)
+    const val = Number(raw)
+    if (!Number.isInteger(val)) {
+      throw new Error(
+        `test/conformance.tsv: ${runtime}.${name} is ` +
+        `${JSON.stringify(raw)}, expected an integer`)
+    }
+    return val
+  }
+
+  return {
+    total: num('total'),
+    rejected: num('rejected'),
+    diagnosed: num('diagnosed'),
+    crashes: num('crashes'),
+  }
+}
+
+// Walk up from this file — `dist-test/` at runtime — to the repo root, the
+// same way findSpecDir does, so moving the suite does not mean recounting
+// `..` hops.
+function findRepoRoot(): string {
+  let dir = __dirname
+  for (let up = 0; up < 8; up++) {
+    if (Fs.existsSync(Path.join(dir, 'test', 'conformance.tsv'))) {
+      return dir
+    }
+    dir = Path.dirname(dir)
+  }
+  throw new Error('cannot find repo root (no test/conformance.tsv above ' +
+    __dirname + ')')
+}
 
 // How many individual failures to print; the assertion message is not
 // truncated. Only bounds console noise.

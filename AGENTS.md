@@ -261,7 +261,7 @@ neither had ever executed on CI. **Do not reintroduce a skip here.**
 | Half | Fixtures | Assertion |
 |---|---|---|
 | `valid/` | 268 | must parse **and** produce the correct value — asserted at **100%** |
-| `invalid/` | 509 | must be rejected — asserted against a measured **floor** |
+| `invalid/` | 509 | must be rejected — asserted against **exact** measured counts in `test/conformance.tsv` |
 
 Valid: TS (`toml-valid`) asserts the collected failure list is empty and
 that at least 200 fixtures actually ran, so a broken clone cannot pass by
@@ -270,21 +270,35 @@ running nothing; Go (`TestTomlValid`) reports each failure with
 
 Invalid (`toml-invalid` / `TestTomlInvalid`): this is a permissive
 grammar layered on relaxed-JSON jsonic, so it accepts many documents TOML
-rejects, and 100% is not reachable today. The floor is instead pinned at
-what was **measured**, and it ratchets: it breaks the build the moment
-rejection regresses, and it is meant to be **raised** as the grammar
-tightens. **Never lower a floor to make the build pass.** The floors live
-next to the tests — `INVALID_FLOOR` / `INVALID_DIAGNOSED_FLOOR` in
-`ts/test/toml.test.ts`, `invalidFloor` / `invalidDiagnosedFloor` in
-`go/toml_valid_test.go`.
+rejects, and 100% is not reachable today. The counts are instead pinned at
+what was **measured**, in **one file both runtimes read**:
+`test/conformance.tsv`.
+
+They are **exact**, not floors. A floor is a lower bound, so it absorbs
+degradation silently — the diagnosed floor this replaced sat 11 below its
+own measured value, meaning eleven documents could have decayed from a
+diagnosed error into an internal crash with the build still green. The
+corpus is pinned by commit, so the counts are deterministic and exactness
+is the honest assertion. Movement in **either** direction fails:
+
+- **Down** — something regressed. Do not edit the file to make it pass.
+- **Up** — the grammar improved. Re-measure **both** runtimes and update
+  that one file.
+
+The two runtimes have their own rows and their numbers legitimately
+differ; the reason for the gap is written in that file's header, next to
+the numbers it explains. Before, they were four constants in two languages
+in two files, all commented "MEASURED on 2026-08-09" against the same
+corpus, with nothing comparing them.
 
 Rejections are counted two ways, and the two cannot be traded for each
 other: a **diagnosed** rejection is a real parse error (a `.code`-bearing
 Tabnas/jsonic error in TS, a returned `error` in Go); anything else is an
 internal crash (a `TypeError` in TS, a recovered panic in Go). A crash is
-still a rejection but it is not a *conformant* one, so both have their
-own floor. Fixing a crash into a diagnosis raises the second number;
-turning a diagnosis into a crash breaks the build.
+still a rejection but it is not a *conformant* one, so both are counted
+separately and `test/conformance.tsv` carries a `crashes` column as well.
+Fixing a crash into a diagnosis raises the diagnosed number; turning a
+diagnosis into a crash breaks the build.
 
 The suites are no longer allowed to skip, but the BOM rule they cover
 (`valid/utf8-bom-01`, `-02`) also stays pinned by corpus-free local
@@ -377,9 +391,10 @@ What "correct" means here, in order of authority:
    failure, not a discrepancy. Discovery is by directory listing in both
    runtimes (`go/toml_tsv_test.go` `TestSpec` lists `test/spec/`), so a new
    `.tsv` file runs everywhere without touching a runner.
-2. **The toml-test conformance suite holds.** `valid/` is asserted at 100%
-   and the `invalid/` floors ratchet — never lower a floor to make the build
-   pass; raise it when rejection genuinely improves.
+2. **The toml-test conformance suite holds.** `valid/` is asserted at 100%,
+   and the `invalid/` counts match `test/conformance.tsv` exactly — never
+   edit that file to make a regression pass; update it, for BOTH runtimes,
+   when rejection genuinely improves.
 3. **The three version constants agree** — `ts/package.json` `"version"`,
    `const VERSION` in `ts/src/toml.ts`, and `const VERSION` in `go/toml.go`.
    `ts/test/version.test.ts` and `go/version_test.go` fail the build if they
