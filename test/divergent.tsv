@@ -1,0 +1,39 @@
+input	ts	go	why
+# divergent.tsv — where this repo's two ports DISAGREE, executed by both.
+#
+#   input  TOML source. Escapes \n \r \t \\ are decoded, as in spec/.
+#   ts,go  what each port produces: a JSON value, or ERROR:<code>, or
+#          ERROR:<code>@<row>:<col> when the POSITION is the disagreement.
+#   why    the audit item, and where the repair lives.
+#
+# NOT A FIXTURE. A fixture fails when behaviour REGRESSES. This fails BOTH
+# ways: when a port is repaired to agree with the other, the row still
+# claims they differ, so the suite goes red and names the row to delete. A
+# divergence recorded as a passing test of current behaviour survives its
+# own repair, with nothing red — which is how the 2026-08 audit found 29
+# recorded claims contradicted by execution.
+#
+# MEASURED 2026-08-19 by tasks/ax-parity-probe.js and re-measured in each
+# port. The probe could not run on this repo at all until that day: it
+# assumed one Go plugin surface and this repo exports the other, so it
+# failed to COMPILE and reported "COULD NOT RUN". These four rows are the
+# first cross-runtime measurement this repo has ever had beyond its
+# fixtures.
+#
+# --- Audit P5: Go advances the error column in BYTES ---------------------
+# TypeScript reports the column in characters; Go adds one per extra byte,
+# so a two-byte 'é' costs two columns and a four-byte emoji costs four. The
+# gap widens with the byte length of what precedes the failure, which is
+# why all four rows below differ by a different amount.
+#
+# Engine repair: tabnas/parser#124. These rows go red on adoption, which is
+# the signal to delete them.
+#
+# NOTE THE DIRECTION. json5's position rows go the OTHER way — Go reporting
+# LOWER, because TypeScript counts UTF-16 code units and an astral
+# character advances its column by two. That one is argued and PERMANENT.
+# Same symptom, opposite sign, opposite verdict.
+["é" 1]	ERROR:unexpected@1:5	ERROR:unexpected@1:6	P5 parser#124
+["€" 1]	ERROR:unexpected@1:5	ERROR:unexpected@1:7	P5 parser#124
+["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:8	P5 parser#124
+["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:12	P5 parser#124
