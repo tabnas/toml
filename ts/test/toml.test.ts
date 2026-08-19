@@ -398,6 +398,17 @@ describe('toml', () => {
       'a = 1\n[a.b]\nc = 2',
       'a = 1\n[[a]]\nb = 2',
       '[a]\nb = 1\n[[a.b]]\nc = 2',
+
+      // Redefining an array-of-tables as a table. These did NOT crash: both
+      // ports accepted them and both silently DESTROYED data, in opposite
+      // directions — this one kept the array and dropped the second table's
+      // contents entirely, Go replaced the array with the second table and
+      // dropped the first. Silent data loss on an invalid document is worse
+      // than the TypeError above, because nothing at all reports it.
+      // corpus: array/tables-02, table/duplicate-key-07.
+      '[[fruit]]\nname = "apple"\n[[fruit.variety]]\n' +
+      'name = "red delicious"\n[fruit.variety]\nname = "granny smith"',
+      '[[x]]\na = 1\n[x]\nb = 2',
     ]
     for (const src of conflicts) {
       let caught: any = null
@@ -438,13 +449,14 @@ describe('toml', () => {
 // lower them. See test('toml-invalid').
 //
 // RAISED 2026-08-19, same corpus pin, after key-conflict detection replaced
-// six uncaught TypeErrors with a `toml_key_conflict` diagnosis. Measured
-// 245 rejected / 245 diagnosed / 0 internal crashes, from 242 / 227 / 15.
-// The diagnosed floor moves furthest because that is what the change does:
-// the crashes were already counted as rejections, just not conformant ones.
+// uncaught TypeErrors with a `toml_key_conflict` diagnosis and closed the
+// array-of-tables redefinition it exposed. Measured 247 rejected / 247
+// diagnosed / 0 internal crashes, from 242 / 227 / 15. The diagnosed floor
+// moves furthest because that is what the change does: the crashes were
+// already counted as rejections, just not conformant ones.
 const INVALID_TOTAL = 509
-const INVALID_FLOOR = 245
-const INVALID_DIAGNOSED_FLOOR = 245
+const INVALID_FLOOR = 247
+const INVALID_DIAGNOSED_FLOOR = 247
 
 // How many individual failures to print; the assertion message is not
 // truncated. Only bounds console noise.

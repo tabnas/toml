@@ -209,6 +209,19 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
     ctx.t0, r, ctx)
 }
 
+// Whether an existing array-of-tables is a legitimate thing to land on.
+//
+// A header like `[fruit.variety]` walks THROUGH `fruit` and DEFINES `variety`,
+// and the two positions have opposite rules. Descending through an
+// array-of-tables is how `[[x]]` followed by `[x.y]` works, and four valid
+// corpus documents rely on it. Landing on one as the thing being defined is
+// `[x]` trying to redefine `[[x]]` — invalid TOML.
+//
+// The grammar already separates the two: `#DOT`-terminated segments are
+// intermediate, `#CS`-terminated ones are final.
+const DESCEND = true
+const DEFINE = false
+
 // A table node, or a DIAGNOSED refusal to descend into something that is not
 // one.
 //
@@ -221,22 +234,36 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
 // rejection is a real parse error ... anything else is an internal crash"),
 // and that turning a crash into a diagnosis is the point: it raises
 // INVALID_DIAGNOSED_FLOOR.
-function tableAt(container: any, key: string, r: any, ctx: any): any {
+function tableAt(
+  container: any, key: string, r: any, ctx: any, descend: boolean
+): any {
   const existing = container[key]
 
-  // An existing OBJECT — table or array — passes straight through, exactly as
-  // the `container[key] || node()` this replaces did. An array here is
-  // legitimate: `[[x]]` followed by `[x.y]` descends into the array-of-tables,
-  // and four valid documents in the corpus do precisely that. Only a SCALAR is
-  // a conflict, which is the crash this repairs and nothing wider.
-  //
-  // Object.create(null) has no prototype, so `instanceof` and `constructor`
-  // are both unavailable — hence the shape test.
-  if (null != existing && 'object' === typeof existing) {
-    return existing
-  }
   if (null == existing) {
     return (container[key] = node())
+  }
+
+  if (Array.isArray(existing)) {
+    if (descend) {
+      return existing
+    }
+
+    // `[[fruit.variety]]` then `[fruit.variety]`. Both ports used to accept
+    // this and both DESTROYED data doing it, in opposite directions: this one
+    // kept the array and silently dropped the second table's contents, Go
+    // replaced the array with the second table and dropped the first.
+    throw new JsonicError(
+      'toml_key_conflict',
+      { key, why: 'it is already an array of tables' },
+      ctx.t0, r, ctx)
+  }
+
+  // An existing TABLE passes straight through, exactly as the
+  // `container[key] || node()` this replaces did. Object.create(null) has no
+  // prototype, so `instanceof` and `constructor` are both unavailable — hence
+  // the shape test.
+  if ('object' === typeof existing) {
+    return existing
   }
 
   throw new JsonicError(
@@ -247,6 +274,7 @@ function tableAt(container: any, key: string, r: any, ctx: any): any {
     },
     ctx.t0, r, ctx)
 }
+
 
 
 const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
@@ -382,7 +410,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
         let last = arr[arr.length - 1]
         r.node = last ? last : (arr.push(node()), arr[arr.length - 1])
       } else {
-        r.node = tableAt(r.parent.node, key, r, ctx)
+        r.node = tableAt(r.parent.node, key, r, ctx, DESCEND)
       }
     },
 
@@ -392,9 +420,9 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
         let arr = r.prev.node
         let last = arr[arr.length - 1]
         last = last ? last : (arr.push(node()), arr[arr.length - 1])
-        r.node = tableAt(last, key, r, ctx)
+        r.node = tableAt(last, key, r, ctx, DESCEND)
       } else {
-        r.node = tableAt(r.prev.node, key, r, ctx)
+        r.node = tableAt(r.prev.node, key, r, ctx, DESCEND)
       }
     },
 
@@ -402,7 +430,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       let key = r.o0.val
       r.node = r.n.table_array
         ? arrayAt(r.parent.node, key, r, ctx)
-        : tableAt(r.parent.node, key, r, ctx)
+        : tableAt(r.parent.node, key, r, ctx, DEFINE)
     },
 
     '@table-key-cs-tail': (r: any, ctx: any) => {
@@ -411,11 +439,11 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
         let arr = r.prev.node
         let last = arr[arr.length - 1]
         last = last ? last : (arr.push(node()), arr[arr.length - 1])
-        r.node = tableAt(last, key, r, ctx)
+        r.node = tableAt(last, key, r, ctx, DEFINE)
       } else {
         r.node = r.n.table_array
           ? arrayAt(r.prev.node, key, r, ctx)
-          : tableAt(r.prev.node, key, r, ctx)
+          : tableAt(r.prev.node, key, r, ctx, DEFINE)
       }
     },
 
@@ -440,7 +468,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     },
 
     '@dive-key-dot': (r: any, ctx: any) => {
-      r.node = tableAt(r.parent.node, r.o0.val, r, ctx)
+      r.node = tableAt(r.parent.node, r.o0.val, r, ctx, DESCEND)
     },
 
     // Conditions.
