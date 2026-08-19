@@ -13,3 +13,21 @@ a = 	ERROR:unexpected
 a = "abc 	ERROR:unterminated_string
 a = 'abc 	ERROR:unterminated_string
 a = """abc 	ERROR:unterminated_string
+# INVALID ESCAPES. Both runtimes reject these; neither used to.
+#
+# `\xAg` was `{"a":"\n"}` in TypeScript: parseInt is not a validator -- it
+# stops at the first non-hex character and returns what it read, so `Ag`
+# decoded as 0x0A and the `g` vanished. Go's strconv.ParseInt errors, which is
+# why only one runtime was wrong. `\xA"` is the same defect eating the CLOSING
+# QUOTE, which is why it used to surface as unterminated_string instead of a
+# bad escape.
+#
+# `\UFFFFFFFF` was a REPLACEMENT CHARACTER in a successful Go parse --
+# WriteRune above 0x10FFFF does not fail, it silently writes U+FFFD -- and in
+# TypeScript it was an uncaught RangeError from String.fromCodePoint, reported
+# as `unexpected`: a crash wearing a diagnostic's clothes, and the reason the
+# isUnicodeCharacter check below it never ran.
+a = "\xAg"	ERROR:invalid_ascii
+a = "\xg1"	ERROR:invalid_ascii
+a = "\xA"	ERROR:invalid_ascii
+a = "\UFFFFFFFF"	ERROR:invalid_unicode

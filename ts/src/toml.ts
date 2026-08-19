@@ -611,7 +611,16 @@ function makeTomlStringMatcher() {
                   continue
                 } else if (char === 'x') {
                   sI++
-                  let cc = parseInt(src.substring(sI, sI + 2), 16)
+                  // parseInt is NOT a validator: it stops at the first
+                  // non-hex character and returns what it read so far, so
+                  // `\xAg` decoded as 0x0A and swallowed the `g`, and `\xA"`
+                  // decoded as 0x0A and swallowed the CLOSING QUOTE — which
+                  // then surfaced as unterminated_string rather than a bad
+                  // escape. Go's strconv.ParseInt errors on both, which is
+                  // why it rejected them and this did not. Same defect the
+                  // engine had at its own \x / \u sites.
+                  const xs = src.substring(sI, sI + 2)
+                  let cc = /^[0-9a-fA-F]{2}$/.test(xs) ? parseInt(xs, 16) : NaN
 
                   if (isNaN(cc)) {
                     sI = sI - 2
@@ -649,7 +658,19 @@ function makeTomlStringMatcher() {
                     codePoint += char
                   }
 
-                  const result = String.fromCodePoint(parseInt(codePoint, 16))
+                  // Range-checked BEFORE the code point is built.
+                  // String.fromCodePoint THROWS a RangeError above 0x10FFFF,
+                  // so `\UFFFFFFFF` left this matcher as an uncaught internal
+                  // error and reached the caller as `unexpected` — a crash
+                  // wearing a diagnostic's clothes. isUnicodeCharacter below
+                  // could never have caught it: it never ran.
+                  const cp = parseInt(codePoint, 16)
+
+                  if (!(cp <= 0x10ffff)) {
+                    return lex.bad('invalid_unicode', beginUnicode, sI)
+                  }
+
+                  const result = String.fromCodePoint(cp)
 
                   if (!isUnicodeCharacter(result)) {
                     return lex.bad('invalid_unicode', beginUnicode, sI)

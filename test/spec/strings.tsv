@@ -8,3 +8,9 @@ a = "a b c"	{"a":"a b c"}
 a = "multi word string"	{"a":"multi word string"}
 a = "123"	{"a":"123"}
 a = "true"	{"a":"true"}
+# Escape POSITIVES, the control half of the invalid-escape rows in errors.tsv.
+# Without these the strictness added there could degrade into "reject anything
+# with a backslash" and the fixture would still be green.
+a = "\x41"	{"a":"A"}
+a = "A"	{"a":"A"}
+a = "\U0001F600"	{"a":"😀"}
