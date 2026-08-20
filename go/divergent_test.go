@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -62,17 +61,6 @@ func outcome(src string) string {
 	return string(b)
 }
 
-var positionSuffix = regexp.MustCompile(`@(\d+:\d+)$`)
-
-// splitCode turns `unexpected@1:8` into ("unexpected", "1:8"), and
-// `unexpected` into ("unexpected", "").
-func splitCode(code string) (string, string) {
-	if loc := positionSuffix.FindStringSubmatchIndex(code); nil != loc {
-		return code[:loc[0]], code[loc[2]:loc[3]]
-	}
-	return code, ""
-}
-
 // sameExpectation reports whether two cells MEAN the same thing. Compared
 // by meaning, not bytes: `1` and `1.0` are one expectation, and a row whose
 // columns differ only that way records no divergence at all.
@@ -85,20 +73,30 @@ func sameExpectation(a, b string) bool {
 		if !support.IsErrorExpect(a) || !support.IsErrorExpect(b) {
 			return false
 		}
-		ra, erra := support.ErrorCode(a)
-		rb, errb := support.ErrorCode(b)
+		ea, erra := support.ErrorExpect(a)
+		eb, errb := support.ErrorExpect(b)
 		if nil != erra || nil != errb {
 			return false
 		}
-		ca, pa := splitCode(ra)
-		cb, pb := splitCode(rb)
-		if ca != cb {
+		if ea.Code != eb.Code {
 			return false
 		}
 		// POSITION IS OPT-IN. A cell that pins no position is satisfied by
 		// any position; one that does is compared on both. Same rule as
-		// tabnas/support#12, so migrating changes nothing.
-		return "" == pa || "" == pb || pa == pb
+		// tabnas/support#12.
+		//
+		// READ IT OFF THE STRUCT, not off the code string. `ErrorCode`
+		// returns `ee.Code`, which support#12 split the position OUT of —
+		// so the `@1:8` suffix this used to look for is no longer there to
+		// find, every cell parsed as "pins no position", and every pair of
+		// rows sharing a code compared EQUAL. That silently converted this
+		// whole register into rows that assert nothing, which is the exact
+		// failure it exists to catch. It surfaced only because the vacuity
+		// check below fires before the comparison does.
+		if !ea.HasPos || !eb.HasPos {
+			return true
+		}
+		return ea.Row == eb.Row && ea.Col == eb.Col
 	}
 
 	va, erra := support.ParseExpect(a)
@@ -172,5 +170,40 @@ func TestDivergenceRegister(t *testing.T) {
 				"  got:      %s\n  expected: %s",
 				row.Where(), registerRuntime, registerOther, got, mine)
 		})
+	}
+}
+
+// TestSameExpectationReadsThePosition pins the comparator itself, because a
+// comparator that stops distinguishing positions does not fail — it makes
+// every position row in the register read as "records no divergence", and
+// the register becomes a file of rows that assert nothing while staying
+// green on the rows that survive.
+//
+// That is not hypothetical. `sameExpectation` used to re-parse an `@1:8`
+// suffix off `support.ErrorCode`, and tabnas/support#12 split the position
+// OUT of that value — so every cell parsed as "pins no position" and every
+// pair sharing a code compared equal. Nothing in this repo asserted the
+// comparator's own behaviour, so the only symptom was the vacuity check
+// firing on rows that were, in fact, perfectly good.
+//
+// ts/test/divergent.test.ts asserts the same four cases.
+func TestSameExpectationReadsThePosition(t *testing.T) {
+	for _, c := range []struct {
+		name, a, b string
+		same       bool
+	}{
+		// The case that regressed: same code, different column.
+		{"differing column", "ERROR:unexpected@1:5", "ERROR:unexpected@1:6", false},
+		{"differing row", "ERROR:unexpected@1:5", "ERROR:unexpected@2:5", false},
+
+		// Controls. Without these, "distinguishes positions" is also
+		// satisfied by a comparator that calls everything different.
+		{"identical position", "ERROR:unexpected@1:5", "ERROR:unexpected@1:5", true},
+		{"position is opt-in", "ERROR:unexpected", "ERROR:unexpected@1:5", true},
+	} {
+		if got := sameExpectation(c.a, c.b); got != c.same {
+			t.Errorf("%s: sameExpectation(%q, %q) = %v, want %v",
+				c.name, c.a, c.b, got, c.same)
+		}
 	}
 }
