@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -61,6 +62,38 @@ func outcome(src string) string {
 	return string(b)
 }
 
+// splitCell reads `ERROR:unexpected@1:8` as ("unexpected", "1:8") and
+// `ERROR:unexpected` as ("unexpected", "").
+//
+// PARSED HERE, NOT BY THE SUPPORT LIBRARY, and that is deliberate. This
+// comparator used to ask `support.ErrorCode` for the code and then look
+// for an `@1:8` suffix on the answer. tabnas/support#12 split the
+// position OUT of that value, so the suffix was no longer there to find:
+// every cell parsed as "pins no position", every pair of rows sharing a
+// code compared EQUAL, and this whole register silently became rows that
+// assert nothing — the exact failure it exists to catch, arriving through
+// a dependency rather than an edit.
+//
+// The obvious repair — call the newer `support.ErrorExpect` and read
+// Row/Col off the struct — swaps one coupling for another AND does not
+// compile against the `support/go v0.3.1` this module pins, because that
+// function does not exist there. Green CI hid it: the shared polyglot-ci
+// workflow links the SIBLING checkout, where it does exist, so `go test`
+// passed in CI and failed for anyone building against the pinned release.
+//
+// The cell format is this repo's own contract, documented in
+// test/AGENTS.md, so this repo reads it. No support version can change
+// what it means.
+var cellPosition = regexp.MustCompile(`@(\d+:\d+)$`)
+
+func splitCell(cell string) (string, string) {
+	code := strings.TrimPrefix(cell, "ERROR:")
+	if loc := cellPosition.FindStringSubmatchIndex(code); nil != loc {
+		return code[:loc[0]], code[loc[2]:loc[3]]
+	}
+	return code, ""
+}
+
 // sameExpectation reports whether two cells MEAN the same thing. Compared
 // by meaning, not bytes: `1` and `1.0` are one expectation, and a row whose
 // columns differ only that way records no divergence at all.
@@ -73,30 +106,15 @@ func sameExpectation(a, b string) bool {
 		if !support.IsErrorExpect(a) || !support.IsErrorExpect(b) {
 			return false
 		}
-		ea, erra := support.ErrorExpect(a)
-		eb, errb := support.ErrorExpect(b)
-		if nil != erra || nil != errb {
-			return false
-		}
-		if ea.Code != eb.Code {
+		ca, pa := splitCell(a)
+		cb, pb := splitCell(b)
+		if ca != cb {
 			return false
 		}
 		// POSITION IS OPT-IN. A cell that pins no position is satisfied by
 		// any position; one that does is compared on both. Same rule as
 		// tabnas/support#12.
-		//
-		// READ IT OFF THE STRUCT, not off the code string. `ErrorCode`
-		// returns `ee.Code`, which support#12 split the position OUT of —
-		// so the `@1:8` suffix this used to look for is no longer there to
-		// find, every cell parsed as "pins no position", and every pair of
-		// rows sharing a code compared EQUAL. That silently converted this
-		// whole register into rows that assert nothing, which is the exact
-		// failure it exists to catch. It surfaced only because the vacuity
-		// check below fires before the comparison does.
-		if !ea.HasPos || !eb.HasPos {
-			return true
-		}
-		return ea.Row == eb.Row && ea.Col == eb.Col
+		return "" == pa || "" == pb || pa == pb
 	}
 
 	va, erra := support.ParseExpect(a)

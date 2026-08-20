@@ -250,6 +250,34 @@ func TestTomlValid(t *testing.T) {
 func TestTomlInvalid(t *testing.T) {
 	want := readConformance(t, "go")
 
+	// THE COUNTS DEPEND ON WHICH ENGINE IS LINKED, and two are in play.
+	//
+	// The shared polyglot-ci workflow clones each tabnas dependency and
+	// wires `go work use` over it, so CI measures against parser's `main`.
+	// A plain `go test` measures against the `v0.8.10` go.mod pins. Those
+	// are different engines until the release wave re-pins, and they give
+	// different answers here — so a single recorded number is wrong for
+	// one of the two builds, whichever number is chosen.
+	//
+	// The whole difference is parser audit item P1: its text matcher used
+	// to end a text run at a string quote, which made the STRING matcher
+	// refuse eight documents (string/no-open-01..08) that TypeScript has
+	// always accepted. That refusal was the defect, not a conformance
+	// check, so the count is LOWER on the repaired engine.
+	//
+	// conformance.tsv records the repaired number. Rather than guess which
+	// engine is linked, ask it the one question the difference turns on.
+	// `s = a"` is the exact shape: unquoted text, then a quote.
+	if _, err := Parse(`s = a"`); err != nil {
+		want.rejected += 8
+		want.diagnosed += 8
+		t.Logf("linked engine still ends a text run at a quote (parser P1 "+
+			"absent): expecting %d/%d, which is conformance.tsv's number "+
+			"plus the eight string/no-open documents that defect refuses. "+
+			"This branch disappears when go.mod re-pins to a released "+
+			"engine carrying P1.", want.rejected, want.diagnosed)
+	}
+
 	root := filepath.Join(ensureCorpus(t), "tests", "invalid")
 
 	type fixture struct {
