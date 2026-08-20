@@ -25,7 +25,7 @@ import Path from 'node:path'
 import { Tabnas } from '@tabnas/parser'
 import { jsonic } from '@tabnas/jsonic'
 import {
-  findSpecDir, loadSpec, isErrorExpect, errorExpect, parseExpect, equalValue,
+  findSpecDir, loadSpec, isErrorExpect, parseExpect, equalValue,
 } from '@tabnas/support'
 
 import { Toml } from '..'
@@ -55,6 +55,34 @@ function outcome(src: string): string {
 }
 
 
+// `ERROR:unexpected@1:8` -> ['unexpected', '1:8']; `ERROR:unexpected` ->
+// ['unexpected', ''].
+//
+// PARSED HERE, NOT BY THE SUPPORT LIBRARY, and that is deliberate. This
+// comparator used to ask `errorCode` for the code and then look for an
+// `@1:8` suffix on the answer. tabnas/support#12 split the position OUT of
+// that value, so the suffix was no longer there to find: every cell parsed
+// as "pins no position", every pair of rows sharing a code compared EQUAL,
+// and this whole register silently became rows that assert nothing — the
+// exact failure it exists to catch, arriving through a dependency rather
+// than an edit.
+//
+// The obvious repair — call the newer `errorExpect` and read row/col off
+// the result — swaps one coupling for another AND throws at runtime
+// against the PUBLISHED `@tabnas/support`, which does not export it
+// (0.3.2 has `errorCode` only, and its `errorCode` still returns the
+// position attached). Green CI hid it: the shared polyglot-ci workflow
+// symlinks the SIBLING checkout, where the function exists.
+//
+// The cell format is this repo's own contract, documented in
+// test/AGENTS.md, so this repo reads it. No support version can change
+// what it means. go/divergent_test.go is repaired the same way.
+function splitCell(cell: string): [string, string] {
+  const code = cell.startsWith('ERROR:') ? cell.slice('ERROR:'.length) : cell
+  const at = code.match(/@(\d+:\d+)$/)
+  return at ? [code.slice(0, at.index), at[1]] : [code, '']
+}
+
 // Do two cells MEAN the same thing? Compared by meaning, not bytes: `1` and
 // `1.0` are one expectation, and a row whose columns differ only that way
 // records no divergence at all.
@@ -64,27 +92,16 @@ function same(a: string, b: string): boolean {
   if (isErrorExpect(a) || isErrorExpect(b)) {
     if (!isErrorExpect(a) || !isErrorExpect(b)) return false
 
-    const ea = errorExpect(a)
-    const eb = errorExpect(b)
-    if (ea.code !== eb.code) return false
+    const [ca, pa] = splitCell(a)
+    const [cb, pb] = splitCell(b)
+    if (ca !== cb) return false
 
     // POSITION IS OPT-IN. A cell that pins no position is satisfied by any
     // position, because most rows here are about the code and pinning the
     // column of every one of them would make the register fail on changes
     // it is not recording. A cell that DOES pin one is compared on both.
     // Same rule as tabnas/support#12.
-    //
-    // READ IT OFF THE STRUCT, not off the code string. `errorCode` returns
-    // `errorExpect(...).code`, which support#12 split the position OUT of —
-    // so the `@1:8` suffix this used to look for is no longer there to
-    // find, every cell parsed as "pins no position", and every pair of rows
-    // sharing a code compared EQUAL. That silently converted this whole
-    // register into rows that assert nothing, which is the exact failure it
-    // exists to catch. It surfaced only because the vacuity check fires
-    // before the comparison does. go/divergent_test.go had the identical
-    // defect and is repaired the same way.
-    if (null == ea.row || null == eb.row) return true
-    return ea.row === eb.row && ea.col === eb.col
+    return '' === pa || '' === pb || pa === pb
   }
 
   try {
