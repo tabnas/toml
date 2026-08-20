@@ -20,9 +20,9 @@
     "directory": "ts"
   },
   "scripts": {
-    "pretest": "bash ../scripts/fetch-toml-test.sh",
+    "pretest": "npm run build && bash ../scripts/fetch-toml-test.sh",
     "test": "node --enable-source-maps --test \"dist-test/*.test.js\"",
-    "pretest-cov": "bash ../scripts/fetch-toml-test.sh",
+    "pretest-cov": "npm run build && bash ../scripts/fetch-toml-test.sh",
     "test-cov": "rm -rf ./coverage && mkdir -p ./coverage && node --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --enable-source-maps --test \"dist-test/*.test.js\"",
     "test-some": "node --enable-source-maps --test-name-pattern=\"$npm_config_pattern\" --test dist-test",
     "watch": "tsc --build src test -w",
