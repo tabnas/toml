@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	jsonic "github.com/tabnas/jsonic/go"
+	support "github.com/tabnas/support/go"
 )
 
 // BurntSushi/toml-test conformance harness (Go side); twin of the
@@ -44,15 +45,57 @@ var suiteRoot = filepath.Join("..", "ts", "test", "toml-test")
 
 var fetchScript = filepath.Join("..", "scripts", "fetch-toml-test.sh")
 
-// Floors for the invalid half, MEASURED on 2026-08-09 against
-// BurntSushi/toml-test @ 9eef1b9 with the Go parser at VERSION 0.5.0.
-// A ratchet, not a target: raise them when the grammar tightens, never
-// lower them. See TestTomlInvalid.
-const (
-	invalidTotal          = 509
-	invalidFloor          = 230
-	invalidDiagnosedFloor = 230
-)
+// The invalid-half conformance counts, read from ../test/conformance.tsv —
+// the SAME file ../ts/test/toml.test.ts reads, through the same
+// github.com/tabnas/support/go loader.
+//
+// They used to be two constants here and two more in the TypeScript suite,
+// all four commented "MEASURED on 2026-08-09" against the same pinned
+// corpus, reading 230/230 and 227/212, with nothing comparing them. See that
+// file's header for why they are now exact rather than floors, and for what
+// the 9-document gap between the two runtimes is.
+
+// conformance is one runtime's row of ../test/conformance.tsv.
+type conformance struct {
+	total, rejected, diagnosed, crashes int
+}
+
+// readConformance loads this runtime's row. Every failure here is fatal: a
+// zero-valued struct would make every assertion in TestTomlInvalid trivially
+// true, which is the shape of bug this whole file exists to catch.
+func readConformance(t *testing.T, runtime string) conformance {
+	t.Helper()
+
+	path := filepath.Join("..", "test", "conformance.tsv")
+	spec, err := support.LoadSpec(path, nil)
+	if nil != err {
+		t.Fatalf("%s: %v", path, err)
+	}
+
+	for _, row := range spec.Rows {
+		if runtime != row.Named("runtime") {
+			continue
+		}
+		num := func(name string) int {
+			raw := row.Named(name)
+			n, err := strconv.Atoi(raw)
+			if nil != err {
+				t.Fatalf("%s: %s.%s is %q, expected an integer",
+					path, runtime, name, raw)
+			}
+			return n
+		}
+		return conformance{
+			total:     num("total"),
+			rejected:  num("rejected"),
+			diagnosed: num("diagnosed"),
+			crashes:   num("crashes"),
+		}
+	}
+
+	t.Fatalf("%s has no row for runtime %q", path, runtime)
+	return conformance{}
+}
 
 // maxReport bounds how many individual failures are printed; the
 // pass/fail counts are always exact.
@@ -205,6 +248,8 @@ func TestTomlValid(t *testing.T) {
 // build the moment rejection regresses, and it is meant to be raised —
 // never lowered — as the grammar tightens.
 func TestTomlInvalid(t *testing.T) {
+	want := readConformance(t, "go")
+
 	root := filepath.Join(ensureCorpus(t), "tests", "invalid")
 
 	type fixture struct {
@@ -239,9 +284,9 @@ func TestTomlInvalid(t *testing.T) {
 
 	// Guard against the corpus silently emptying out (a bad clone, a moved
 	// directory): a green run must have actually run the fixtures.
-	if len(fixtures) < invalidTotal {
+	if len(fixtures) < want.total {
 		t.Fatalf("toml-test invalid suite looks truncated: %d fixtures found, expected at least %d",
-			len(fixtures), invalidTotal)
+			len(fixtures), want.total)
 	}
 
 	var rejected, diagnosed int
@@ -277,18 +322,33 @@ func TestTomlInvalid(t *testing.T) {
 		t.Logf("  ACCEPTED %s", msg)
 	}
 
-	if rejected < invalidFloor {
-		t.Errorf("BurntSushi/toml-test invalid suite REGRESSED: %d of %d rejected, floor is %d "+
-			"(suite %s @ %s). Documents that must be rejected are now being accepted. "+
-			"Raise the floor when the grammar improves; never lower it to make this pass.",
-			rejected, len(fixtures), invalidFloor, suiteURL, suitePin)
+	// Exact, not a floor. A floor absorbs degradation silently: the
+	// TypeScript diagnosed floor this replaces sat 11 below its own
+	// measured value, so eleven documents could have decayed from a
+	// diagnosed error into an internal crash with the build still green.
+	where := fmt.Sprintf("(suite %s @ %s, counts in test/conformance.tsv)",
+		suiteURL, suitePin)
+
+	if rejected != want.rejected {
+		t.Errorf("BurntSushi/toml-test invalid suite MOVED: %d of %d rejected, "+
+			"test/conformance.tsv says %d %s. Fewer means documents that must be "+
+			"rejected are now accepted — do not edit the file to make this pass. "+
+			"More means the grammar improved: re-measure BOTH runtimes and update "+
+			"that one file.",
+			rejected, len(fixtures), want.rejected, where)
 	}
 
-	if diagnosed < invalidDiagnosedFloor {
-		t.Errorf("BurntSushi/toml-test invalid suite REGRESSED: only %d of %d rejections are "+
-			"diagnosed parse errors, floor is %d. A rejection that is really an internal panic "+
-			"does not count as conformance.",
-			diagnosed, len(fixtures), invalidDiagnosedFloor)
+	if diagnosed != want.diagnosed {
+		t.Errorf("BurntSushi/toml-test invalid suite MOVED: %d of %d rejections are "+
+			"diagnosed parse errors, test/conformance.tsv says %d %s. A rejection "+
+			"that is really an internal panic does not count as conformance.",
+			diagnosed, len(fixtures), want.diagnosed, where)
+	}
+
+	if len(crashRejects) != want.crashes {
+		t.Errorf("BurntSushi/toml-test invalid suite MOVED: %d rejections are "+
+			"internal panics, test/conformance.tsv says %d %s.",
+			len(crashRejects), want.crashes, where)
 	}
 }
 

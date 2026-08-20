@@ -5,3 +5,7 @@ input	expected
 [[products]]\nname = "Hammer"\n[[products]]\nname = "Nail"	{"products":[{"name":"Hammer"},{"name":"Nail"}]}
 [[t]]\na=1\n[[t]]\nb=2	{"t":[{"a":1},{"b":2}]}
 [[x]]\n[x.y]\na=1	{"x":[{"y":{"a":1}}]}
+# Descending into an existing array-of-tables is LEGITIMATE and must not be
+# read as a key conflict: four valid corpus documents do exactly this, and a
+# first cut of the conflict check rejected all four.
+[[x]]\ny = 1\n[x.z]\nw = 2	{"x":[{"y":1,"z":{"w":2}}]}

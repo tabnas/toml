@@ -34,6 +34,41 @@ is the authority; what matters here:
 - Both runtimes split on every tab and read the columns by name from the
   header.
 
+## The divergence register — `test/divergent.tsv`
+
+Separate from `spec/`, and read by `ts/test/divergent.test.ts` and
+`go/divergent_test.go` rather than by the shared runner.
+
+It records the places the two ports **disagree**, with a column per port,
+and it is **not a fixture**. A fixture fails when behaviour regresses. This
+fails **both ways**: when a port is repaired to agree with the other, the
+row still claims they differ, so the suite goes red and names the row to
+delete. A divergence recorded as a passing test of current behaviour
+survives its own repair, with nothing red — which is how the 2026-08 fleet
+audit found 29 recorded claims contradicted by execution.
+
+| column | meaning |
+|---|---|
+| `input` | TOML source, escape-decoded as in `spec/`. |
+| `ts`, `go` | what each port produces: a JSON value, `ERROR:<code>`, or `ERROR:<code>@<row>:<col>` when the position is the disagreement. |
+| `why` | the audit item, and where the repair lives. |
+
+**Position is opt-in.** A cell with no `@row:col` is satisfied by any
+position; one that has it is compared on both.
+
+The current four rows are all **audit P5** — Go advancing the error column
+in *bytes*, so a two-byte `é` costs two columns and a four-byte emoji costs
+four. They go red when `tabnas/parser#124` is adopted, which is the signal
+to delete them.
+
+This repo had **never been probed cross-runtime** beyond its fixtures: the
+fleet probe assumed one Go plugin surface and this repo exports the other,
+so it failed to compile and reported "COULD NOT RUN". These are the first
+such measurements it has.
+
+The runners are local for now; `tabnas/support#14` makes the mechanism
+shared, and the vocabulary here is the one it standardises.
+
 ## Who runs what
 
 - TypeScript: `ts/test/toml-tsv.test.ts` — `makeRunner(...).dir(...)`.

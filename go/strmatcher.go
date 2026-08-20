@@ -196,6 +196,15 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 					if err != nil {
 						return lex.Bad("invalid_unicode")
 					}
+					// Range-checked, which this never was. WriteRune on a
+					// value above 0x10FFFF does not fail — it silently writes
+					// U+FFFD — so `\UFFFFFFFF` came back as a REPLACEMENT
+					// CHARACTER in a successful parse, where TS refused the
+					// document. TOML: "The escape codes must be valid Unicode
+					// scalar values."
+					if 0x10FFFF < cp {
+						return lex.Bad("invalid_unicode")
+					}
 					b.WriteRune(rune(cp))
 					sI += size
 					cI += size

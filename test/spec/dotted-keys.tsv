@@ -3,3 +3,14 @@ a.b = 1	{"a":{"b":1}}
 a.b.c = 2	{"a":{"b":{"c":2}}}
 a.b.c.d = 1	{"a":{"b":{"c":{"d":1}}}}
 a.b = 1\na.c = 2	{"a":{"b":1,"c":2}}
+# Date-shaped BARE KEYS, the positive control for the T6 range check.
+#
+# A key that merely looks like a date is not a date, so its components are not
+# required to denote a real instant: `2006-01-32 = 1` names a key. Both ports
+# already had a key-context branch in the date matcher for this; the range
+# check added for T6 sits on the VALUE side of that branch, and these rows are
+# what fails if it is ever hoisted above it. Without them, "reject every
+# date-shaped thing whose day is 32" passes the error rows and stays green.
+2006-01-32 = 1	{"2006-01-32":1}
+2100-02-29 = 1	{"2100-02-29":1}
+a.2006-13-01 = 7	{"a":{"2006-13-01":7}}
