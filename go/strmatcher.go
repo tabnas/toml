@@ -63,8 +63,22 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 
 		for sI < srcLen-1 {
 			sI++
-			cI++
+			// COLUMNS ARE RUNES, NOT BYTES. This loop walks the source a
+			// byte at a time, which is right for reassembling the value
+			// and wrong for the column: `cI++` per byte charged a 2-byte
+			// é two columns and an astral character four, so every
+			// diagnostic after a non-ASCII character in a string pointed
+			// past where it happened. The engine's own matchers advance
+			// CI by `utf8.RuneCountInString`; a custom matcher has to do
+			// the same arithmetic by hand.
+			//
+			// A UTF-8 continuation byte is `10xxxxxx`; every other byte
+			// starts a rune. Counting the non-continuation bytes is the
+			// rune count, without decoding.
 			c := src[sI]
+			if c&0xC0 != 0x80 {
+				cI++
+			}
 
 			switch c {
 			case '\n':
