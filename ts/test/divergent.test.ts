@@ -25,7 +25,7 @@ import Path from 'node:path'
 import { Tabnas } from '@tabnas/parser'
 import { jsonic } from '@tabnas/jsonic'
 import {
-  findSpecDir, loadSpec, isErrorExpect, errorCode, parseExpect, equalValue,
+  findSpecDir, loadSpec, isErrorExpect, errorExpect, parseExpect, equalValue,
 } from '@tabnas/support'
 
 import { Toml } from '..'
@@ -64,16 +64,27 @@ function same(a: string, b: string): boolean {
   if (isErrorExpect(a) || isErrorExpect(b)) {
     if (!isErrorExpect(a) || !isErrorExpect(b)) return false
 
-    const [ca, pa] = split(errorCode(a))
-    const [cb, pb] = split(errorCode(b))
-    if (ca !== cb) return false
+    const ea = errorExpect(a)
+    const eb = errorExpect(b)
+    if (ea.code !== eb.code) return false
 
     // POSITION IS OPT-IN. A cell that pins no position is satisfied by any
     // position, because most rows here are about the code and pinning the
     // column of every one of them would make the register fail on changes
     // it is not recording. A cell that DOES pin one is compared on both.
-    // Same rule as tabnas/support#12, so migrating changes nothing.
-    return '' === pa || '' === pb || pa === pb
+    // Same rule as tabnas/support#12.
+    //
+    // READ IT OFF THE STRUCT, not off the code string. `errorCode` returns
+    // `errorExpect(...).code`, which support#12 split the position OUT of —
+    // so the `@1:8` suffix this used to look for is no longer there to
+    // find, every cell parsed as "pins no position", and every pair of rows
+    // sharing a code compared EQUAL. That silently converted this whole
+    // register into rows that assert nothing, which is the exact failure it
+    // exists to catch. It surfaced only because the vacuity check fires
+    // before the comparison does. go/divergent_test.go had the identical
+    // defect and is repaired the same way.
+    if (null == ea.row || null == eb.row) return true
+    return ea.row === eb.row && ea.col === eb.col
   }
 
   try {
@@ -82,13 +93,6 @@ function same(a: string, b: string): boolean {
   catch {
     return false
   }
-}
-
-
-// `unexpected@1:8` -> ['unexpected', '1:8']; `unexpected` -> ['unexpected', ''].
-function split(code: string): [string, string] {
-  const at = code.match(/@(\d+:\d+)$/)
-  return at ? [code.slice(0, at.index), at[1]] : [code, '']
 }
 
 
@@ -139,4 +143,37 @@ describe('divergence-register', () => {
         'answer either — this is a regression, not a closed divergence.')
     })
   }
+})
+
+
+// Pins the comparator itself, because a comparator that stops
+// distinguishing positions does not fail — it makes every position row in
+// the register read as "records no divergence", and the register becomes a
+// file of rows that assert nothing while staying green on the rows that
+// survive.
+//
+// That is not hypothetical. `same()` used to re-parse an `@1:8` suffix off
+// `errorCode`, and tabnas/support#12 split the position OUT of that value —
+// so every cell parsed as "pins no position" and every pair sharing a code
+// compared equal. Nothing in this repo asserted the comparator's own
+// behaviour, so the only symptom was the vacuity check firing on rows that
+// were, in fact, perfectly good.
+//
+// go/divergent_test.go asserts the same four cases.
+describe('divergence-register comparator', () => {
+  test('reads the position, and treats an unpinned one as opt-in', () => {
+    const cases: [string, string, string, boolean][] = [
+      // The case that regressed: same code, different column.
+      ['differing column', 'ERROR:unexpected@1:5', 'ERROR:unexpected@1:6', false],
+      ['differing row', 'ERROR:unexpected@1:5', 'ERROR:unexpected@2:5', false],
+
+      // Controls. Without these, "distinguishes positions" is also
+      // satisfied by a comparator that calls everything different.
+      ['identical position', 'ERROR:unexpected@1:5', 'ERROR:unexpected@1:5', true],
+      ['position is opt-in', 'ERROR:unexpected', 'ERROR:unexpected@1:5', true],
+    ]
+    for (const [name, a, b, want] of cases) {
+      equal(same(a, b), want, `${name}: same(${a}, ${b})`)
+    }
+  })
 })

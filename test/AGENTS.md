@@ -56,10 +56,24 @@ audit found 29 recorded claims contradicted by execution.
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
 position; one that has it is compared on both.
 
-The current four rows are all **audit P5** — Go advancing the error column
-in *bytes*, so a two-byte `é` costs two columns and a four-byte emoji costs
-four. They go red when `tabnas/parser#124` is adopted, which is the signal
-to delete them.
+The current two rows are the **astral column unit**, and they are
+*permanent*: TypeScript counts UTF-16 code units, so an astral character
+advances the column by two, and Go counts runes, so it advances by one.
+Forced by the scan unit and recorded in `parser/DIVERGENCE.md`. Do not
+delete them on a sweep — nothing is going to close them.
+
+They started as four rows of **audit P5**, Go advancing the error column in
+*bytes*. That defect is repaired (#51), so the two BMP rows went; the two
+astral rows moved with it and only the byte half of their gap closed, so
+they were re-attributed rather than deleted. A row whose number changes is
+not automatically a row that has served its purpose.
+
+**Measure against the sibling checkouts.** The shared `polyglot-ci`
+workflow clones each `tabnas` dependency and wires a `go work use` / npm
+symlink over it, so these suites run against `parser`'s `main` — not the
+version `go/go.mod` and `ts/package.json` pin. Numbers measured against the
+published pin are for a build nothing runs. `admin/scripts/link.sh` sets
+this up locally.
 
 This repo had **never been probed cross-runtime** beyond its fixtures: the
 fleet probe assumed one Go plugin surface and this repo exports the other,

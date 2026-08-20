@@ -20,20 +20,34 @@ input	ts	go	why
 # first cross-runtime measurement this repo has ever had beyond its
 # fixtures.
 #
-# --- Audit P5: Go advances the error column in BYTES ---------------------
-# TypeScript reports the column in characters; Go adds one per extra byte,
-# so a two-byte 'é' costs two columns and a four-byte emoji costs four. The
-# gap widens with the byte length of what precedes the failure, which is
-# why all four rows below differ by a different amount.
+# --- Astral characters: the column UNIT, and it is PERMANENT --------------
+# TypeScript counts UTF-16 code units, so an astral character advances the
+# column by TWO; Go counts runes, so it advances by one. Forced by the scan
+# unit — TS scans UTF-16 code units, Go scans UTF-8 bytes — and recorded in
+# parser/DIVERGENCE.md, "Column positions for astral characters". Nothing
+# below the BMP disagrees, which is what the two deleted rows used to show.
 #
-# Engine repair: tabnas/parser#124. These rows go red on adoption, which is
-# the signal to delete them.
+# WHAT WAS HERE, AND WHY IT IS NOT. Four rows recorded audit item P5: Go
+# adding one column per extra BYTE, so a two-byte 'é' cost two columns and
+# a four-byte emoji four. The header said "these rows go red on adoption,
+# which is the signal to delete them", and on adoption they did exactly
+# that — this file is not a fixture, it fails when a port is REPAIRED as
+# well as when one regresses. The repair was #51 (go/strmatcher.go), which
+# merged while this register was still in flight on another branch.
 #
-# NOTE THE DIRECTION. json5's position rows go the OTHER way — Go reporting
-# LOWER, because TypeScript counts UTF-16 code units and an astral
-# character advances its column by two. That one is argued and PERMANENT.
-# Same symptom, opposite sign, opposite verdict.
-["é" 1]	ERROR:unexpected@1:5	ERROR:unexpected@1:6	P5 parser#124
-["€" 1]	ERROR:unexpected@1:5	ERROR:unexpected@1:7	P5 parser#124
-["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:8	P5 parser#124
-["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:12	P5 parser#124
+#   ["é" 1]   go 1:6 -> 1:5, now equal to ts     CLOSED, deleted
+#   ["€" 1]   go 1:7 -> 1:5, now equal to ts     CLOSED, deleted
+#
+# The two that remain moved too, and only the BYTE half of their gap
+# closed: go 1:8 -> 1:5 and 1:12 -> 1:9, each still one short of the TS
+# column because of the surrogate pair. They are re-attributed rather than
+# deleted — same rows, different reason, and the reason is now the argued
+# and permanent one instead of a repairable defect.
+#
+# MEASURED against the SIBLING CHECKOUTS, which is what CI tests: the
+# shared polyglot-ci workflow clones each tabnas dependency and wires a
+# `go work use` / npm symlink over it, so this repo's suites run against
+# parser's `main`, NOT the `v0.8.10` its go.mod pins. Measuring against the
+# published pin gives different numbers and is not what the gate will see.
+["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	astral column unit — permanent
+["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	astral column unit — permanent
