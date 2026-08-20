@@ -49,6 +49,28 @@ func TestStringErrorColumnsCountRunesNotBytes(t *testing.T) {
 		// the only row where the two halves differ.
 		{"astral", "[\"\U0001F600\" 1]", 5, 6},
 		{"mixed", "[\"ab\U0001F600cd\" 1]", 9, 10},
+
+		// MALFORMED UTF-8. `utf8.RuneCountInString` counts each invalid
+		// byte as ONE rune (RuneError, width 1), and this engine passes
+		// invalid input through rather than rejecting it, so that reaches
+		// the scan. A "skip continuation bytes" test would count a stray
+		// 0x80 as zero and report the later error a column early — which
+		// the first version of this repair did. Raised in review.
+		//
+		// No `ts` column: a JavaScript string cannot hold a lone 0x80 at
+		// all, so there is no TypeScript answer to agree or disagree
+		// with. The requirement here is only that Go matches its own
+		// stated unit.
+		//
+		// Only the first of the two discriminates. 0x80 matches the
+		// continuation pattern `10xxxxxx`, so the rejected first repair
+		// answered 6 for it; 0xFF does not match that pattern and was
+		// counted either way. The second row is kept as the control that
+		// says so — "an invalid byte" and "a continuation byte" are not
+		// the same set, and a fix aimed at one must not be read as
+		// covering the other.
+		{"stray continuation", "[\"a\x80b\" 1]", 7, 0},
+		{"invalid 0xff", "[\"a\xffb\" 1]", 7, 0},
 	} {
 		_, err, panicked := safeParse(c.src)
 		if err == nil {
@@ -69,6 +91,15 @@ func TestStringErrorColumnsCountRunesNotBytes(t *testing.T) {
 		}
 		if uErr := json.Unmarshal(b, &o); uErr != nil {
 			t.Fatalf("%s: unmarshal: %v", c.label, uErr)
+		}
+		if 0 == c.ts {
+			// A row with no TypeScript counterpart: assert Go alone.
+			if o.Col != c.col {
+				t.Errorf("%s: %q col = %d, want %d — an invalid byte is ONE "+
+					"rune to utf8.RuneCountInString, and the column has to "+
+					"agree with it.", c.label, c.src, o.Col, c.col)
+			}
+			continue
 		}
 		if o.Col != c.col {
 			t.Errorf("%s: %q col = %d, want %d (TypeScript says %d). "+
