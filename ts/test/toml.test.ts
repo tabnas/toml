@@ -365,6 +365,59 @@ describe('toml', () => {
       `${INVALID_DIAGNOSED_FLOOR}. A rejection that is really an internal ` +
       'crash does not count as conformance.')
   })
+
+  // Error COLUMNS after a non-ASCII character in a string.
+  //
+  // This port counts UTF-16 code units, which is what `col` means here.
+  // The GO port brings its own string matcher, whose scan loop walks the
+  // source a byte at a time, and it incremented the column once per BYTE:
+  // a 2-byte `é` charged two columns and an astral character four, so
+  // every diagnostic after a non-ASCII character in a string pointed past
+  // where the problem was. Found by the fleet parity probe, which
+  // reported Go's `col` running ahead of this port's by exactly the extra
+  // bytes.
+  //
+  // go/strmatcher_col_test.go asserts the same five inputs. The astral
+  // rows are the only ones where the two answers differ, and that
+  // difference is the recorded engine divergence: this port counts UTF-16
+  // units (an astral character is 2), Go counts runes (1). See
+  // parser/DIVERGENCE.md, "Column positions for astral characters".
+  test('error columns count characters, not bytes', () => {
+    const cases: [string, string, number, number][] = [
+      // Control: pure ASCII, where every unit coincides. Without it,
+      // "columns count characters" is also satisfied by never counting.
+      ['ascii', '[a b]', 2, 2],
+
+      // 2 and 3 bytes, 1 rune, 1 UTF-16 unit: both ports agree.
+      ['latin1', '["\u00e9" 1]', 5, 5],
+      ['bmp', '["\u20ac" 1]', 5, 5],
+
+      // 4 bytes, 1 rune, TWO UTF-16 units: the recorded divergence, and
+      // the only rows where the two halves differ.
+      ['astral', '["\u{1F600}" 1]', 6, 5],
+      ['mixed', '["ab\u{1F600}cd" 1]', 10, 9],
+    ]
+
+    for (const [label, src, col, go] of cases) {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      let err: any = null
+      try {
+        t.parse(src)
+      }
+      catch (e) {
+        err = e
+      }
+      ok(null != err, `${label}: ${JSON.stringify(src)} parsed, expected a diagnostic`)
+
+      // Read the SERIALISED diagnostic, not the thrown object: `col` is
+      // part of the JSON contract (schema/diagnostic.schema.json) and is
+      // not an own enumerable property of the error, so `err.col` is
+      // `undefined` and an assertion against it would compare nothing.
+      const diag = JSON.parse(JSON.stringify(err))
+      equal(diag.col, col,
+        `${label}: ${JSON.stringify(src)} col — Go says ${go}`)
+    }
+  })
 })
 
 

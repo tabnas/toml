@@ -8,6 +8,7 @@ package tabnastoml
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	jsonic "github.com/tabnas/jsonic/go"
 )
@@ -61,9 +62,38 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 
 		var b strings.Builder
 
+		// One past the last byte counted as a rune. The loop below walks
+		// the source a byte at a time — right for reassembling the value,
+		// wrong for the column — so the column has to be advanced only on
+		// a rune BOUNDARY, and this is where the next one starts.
+		runeEnd := sI
+
 		for sI < srcLen-1 {
 			sI++
-			cI++
+			// COLUMNS ARE RUNES, NOT BYTES. `cI++` per byte charged a
+			// 2-byte é two columns and an astral character four, so every
+			// diagnostic after a non-ASCII character in a string pointed
+			// past where it happened. The engine's own matchers advance
+			// CI by `utf8.RuneCountInString`; a matcher that brings its
+			// own scan owns that arithmetic.
+			//
+			// DECODED, not pattern-matched. Testing `c&0xC0 != 0x80` for
+			// "is this a continuation byte" is a different question and
+			// gets malformed input wrong: `utf8.RuneCountInString` counts
+			// each INVALID byte as one rune (RuneError, width 1), so a
+			// stray 0x80 is a character and skipping it would report a
+			// later error one column early. This engine passes invalid
+			// UTF-8 through rather than rejecting it, so that input
+			// reaches here. Raised in review.
+			//
+			// Decoding forward from the last boundary is exactly what
+			// RuneCountInString does, so the two agree by construction
+			// rather than by argument.
+			if sI >= runeEnd {
+				cI++
+				_, w := utf8.DecodeRuneInString(src[sI:])
+				runeEnd = sI + w
+			}
 			c := src[sI]
 
 			switch c {
