@@ -48,7 +48,7 @@ Parses TOML text and returns the root value. For a TOML document the root
 is always a `map[string]any`. The `error` is whatever the engine reports
 for the first syntax problem; it is `nil` on success.
 
-The common no-options call reuses a single lazily-built, cached engine, so
+The common no-options call reuses a single lazily built, cached engine, so
 repeated calls do not rebuild the grammar. Passing a `TomlOptions` builds a
 fresh instance for that call.
 
