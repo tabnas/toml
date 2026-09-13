@@ -1,4 +1,4 @@
-# Reference — Go
+# Reference: Go
 
 Complete, dry description of what `github.com/tabnas/toml/go` exposes, how
 TOML values map to Go, and the grammar the port accepts. For a tour see
@@ -78,7 +78,7 @@ formatting. If you need a `time.Time`, parse `Src` yourself.
 
 ## Options
 
-`TomlOptions` is an empty struct — there are no user-tunable options. It
+`TomlOptions` is an empty struct: there are no user-tunable options. It
 exists so the API can grow without a breaking signature change.
 
 ## Value mapping
@@ -103,7 +103,7 @@ exists so the API can grow without a breaking signature change.
 | Datetime / time literal         | `*TomlTime`                            |
 | Line comment `# …`              | discarded                              |
 
-**Number note:** the Go port returns *all* numbers — integers included —
+**Number note:** the Go port returns *all* numbers (integers included)
 as `float64`. There is no `int64`. Assert numeric leaves as `float64`:
 
 ```go
@@ -136,7 +136,7 @@ The port accepts the core of TOML 1.0:
 - **Comments**: `#` to end of line; the slash and block comment forms are
   disabled.
 - **Datetimes / times**: RFC-3339-style date, date-time, and time
-  literals — and the same shapes used as keys (`2001-02-03 = 1`,
+  literals, and the same shapes used as keys (`2001-02-03 = 1`,
   `[2002-01-02]`).
 
 ## Errors

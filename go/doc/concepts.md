@@ -1,4 +1,4 @@
-# Concepts — Go
+# Concepts: Go
 
 Background reading: how the Go port works on the engine, the grammar model
 it uses, why certain inputs are accepted or rejected, and how it differs
@@ -9,7 +9,7 @@ recipes see the [how-to guide](guide.md); for signatures see the
 ## A grammar plugin on the jsonic engine
 
 Like the TypeScript version, the Go port is a TOML **grammar** layered on
-the relaxed-JSON jsonic engine — here `github.com/tabnas/jsonic/go`. The
+the relaxed-JSON jsonic engine, here `github.com/tabnas/jsonic/go`. The
 engine supplies the lexer, the rule-driven parser, options, and error
 formatting. This package supplies the TOML grammar and a few custom lexer
 matchers, plus a small `Parse` / `MakeJsonic` API that installs them.
@@ -22,7 +22,7 @@ The TOML grammar lives in one file, `toml-grammar.jsonic`, at the
 repository root, written in jsonic syntax. The TypeScript build embeds it
 into `ts/src/toml.ts`; the same text is embedded into `go/toml.go` between
 the `BEGIN/END EMBEDDED` markers. Keeping the grammar as shared data is
-what keeps the two runtimes in sync — both are checked against the shared
+what keeps the two runtimes in sync: both are checked against the shared
 `test/spec/*.tsv` fixtures.
 
 At load time `apply()` parses the embedded grammar text with a jsonic
@@ -42,7 +42,7 @@ matchers; the parser rules implement TOML's table/dotted-key descent.
 
 The Go jsonic engine cannot apply every part of a grammar-parsed map the
 way the TS side does, so `apply()` does several fix-ups after parsing the
-embedded grammar — each compensating for a concrete engine difference, not
+embedded grammar, each compensating for a concrete engine difference, not
 a behaviour choice:
 
 - **`stripUnsupported`** removes the `@`-ref for the string matcher (the Go
@@ -55,7 +55,7 @@ a behaviour choice:
 - **`injectIDLexGuards`** prepends a never-matching alt with `#ID` at slot
   0 to the close states of `table` and `pair`. Go's lexer only checks alt
   position 0 when deciding whether a custom-regex token like `#ID` is
-  expected, while TS checks the position actually being lexed — the guard
+  expected, while TS checks the position actually being lexed; the guard
   makes `b` in `[b]` lex as `#ID` rather than be rejected.
 - **`registerSpecialFloats`** installs `nan` / `inf` (and signed forms) as
   real `float64` values, since these literals cannot round-trip through a
@@ -68,7 +68,7 @@ a behaviour choice:
 
 A value matcher fires unconditionally, so a date-shaped token like
 `1979-05-27` would be claimed as a datetime value before the `#ID`
-bare-key matcher runs — wrong when the date shape is a *key* (`2001-02-03 =
+bare-key matcher runs, wrong when the date shape is a *key* (`2001-02-03 =
 1`, the table header `[2002-01-02]`, or `a.2001-02-08 = 7`).
 
 `makeDateMatcher` resolves this with `isKeyContext`: it scans the current
@@ -100,7 +100,7 @@ Accepted (all covered by the test suites): bare, quoted, and dotted keys
 separators; floats with exponents and `nan` / `inf`; basic, literal, and
 triple-quoted strings with the full escape set; arrays, inline tables,
 tables, nested tables, array-of-tables; `#` comments; and the four
-date/time shapes — including as keys.
+date/time shapes, including as keys.
 
 Rejected (returns a non-nil error): a key with no value (`a = `); a value
 with no key (`= 1`); an unterminated string (`"unterminated`).
@@ -126,7 +126,7 @@ but the language shapes differ:
 Implementation differences (no behavioural effect on parse results):
 
 - The Go port keeps the grammar's *regex-based* date/time value matchers in
-  the embedded text but never reaches them — the context-aware matchers
+  the embedded text but never reaches them; the context-aware matchers
   always run first. The TS port replaces them outright after install.
 - The Go port adds the in-code patches listed above
   (`injectIDLexGuards`, `registerFixedTokens`, the `#` comment re-add,

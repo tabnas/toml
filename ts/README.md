@@ -33,11 +33,11 @@ whole grammar, while parsing is cheap.
 
 Organised around the [Diataxis](https://diataxis.fr) framework:
 
-- [Tutorial](doc/tutorial.md) — a step-by-step first parse.
-- [How-to guide](doc/guide.md) — task-oriented recipes.
-- [Reference](doc/reference.md) — the API, value mapping, and accepted
+- [Tutorial](doc/tutorial.md). A step-by-step first parse.
+- [How-to guide](doc/guide.md). Task-oriented recipes.
+- [Reference](doc/reference.md). The API, value mapping, and accepted
   grammar.
-- [Concepts](doc/concepts.md) — how the plugin works and why.
+- [Concepts](doc/concepts.md). How the plugin works and why.
 
 ## Options
 

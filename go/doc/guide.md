@@ -1,4 +1,4 @@
-# How-to guide — Go
+# How-to guide: Go
 
 Task-oriented recipes. Each is self-contained. For a guided introduction
 see the [tutorial](tutorial.md); for complete signatures and the grammar
@@ -34,8 +34,8 @@ The common no-options call reuses a single cached engine, so repeated
 
 ## Keep a parser for many parses
 
-When you want an explicit, reusable instance — for example to pass to code
-that expects a `*tabnasjsonic.Jsonic` — build one with `MakeJsonic` and call its
+When you want an explicit, reusable instance (for example to pass to code
+that expects a `*tabnasjsonic.Jsonic`), build one with `MakeJsonic` and call its
 `Parse`:
 
 ```go
@@ -62,8 +62,8 @@ result, err := tabnastoml.Parse(string(data))
 
 ## Handle a parse error
 
-A syntax error is returned as the second value. Malformed input — a key
-with no value, a value with no key, an unterminated string — yields a
+A syntax error is returned as the second value. Malformed input (a key
+with no value, a value with no key, an unterminated string) yields a
 non-nil `error`:
 
 ```go
@@ -92,7 +92,7 @@ host := db["host"].(string) // "localhost"
 port := db["port"].(float64) // 5432
 ```
 
-Note that **all numbers are `float64`**, including integers — see the
+Note that **all numbers are `float64`**, including integers; see the
 reference and the concepts page for why.
 
 ## Read integers in every base

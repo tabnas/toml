@@ -50,11 +50,11 @@ literals as `*tabnastoml.TomlTime`.
 
 Organised around the [Diataxis](https://diataxis.fr) framework:
 
-- [Tutorial](doc/tutorial.md) — a step-by-step first parse.
-- [How-to guide](doc/guide.md) — task-oriented recipes.
-- [Reference](doc/reference.md) — the exported API, value mapping, and
+- [Tutorial](doc/tutorial.md). A step-by-step first parse.
+- [How-to guide](doc/guide.md). Task-oriented recipes.
+- [Reference](doc/reference.md). The exported API, value mapping, and
   accepted grammar.
-- [Concepts](doc/concepts.md) — how the port works, including a
+- [Concepts](doc/concepts.md). How the port works, including a
   "Differences from the TS version" section.
 
 ## Features

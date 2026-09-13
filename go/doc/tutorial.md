@@ -1,4 +1,4 @@
-# Tutorial — your first TOML parse (Go)
+# Tutorial: your first TOML parse (Go)
 
 This walks you from nothing to a working parse. Follow it in order; each
 step builds on the last. When you finish you will have installed the
@@ -146,9 +146,9 @@ func main() {
 
 ## Where to go next
 
-- [How-to guide](guide.md) — recipes: reuse a parser, handle errors, read
+- [How-to guide](guide.md). Recipes: reuse a parser, handle errors, read
   dates and numbers.
-- [Reference](reference.md) — the full API, the value-mapping table, and
+- [Reference](reference.md). The full API, the value-mapping table, and
   the accepted grammar.
-- [Concepts](concepts.md) — how the port works, and how it differs from
+- [Concepts](concepts.md). How the port works, and how it differs from
   the TypeScript plugin.

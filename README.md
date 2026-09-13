@@ -69,7 +69,7 @@ name = "Tom"
 
 ## Documentation
 
-The docs follow the [Diataxis](https://diataxis.fr) framework — one file
+The docs follow the [Diataxis](https://diataxis.fr) framework: one file
 per purpose, per language:
 
 | Purpose       | TypeScript | Go |

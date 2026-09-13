@@ -1,4 +1,4 @@
-# How-to guide — TypeScript
+# How-to guide: TypeScript
 
 Task-oriented recipes. Each is self-contained. For a guided introduction
 see the [tutorial](tutorial.md); for complete signatures and the grammar
@@ -82,7 +82,7 @@ code   // => 'unexpected'
 ```
 
 The error's `message` is a formatted, multi-line diagnostic pointing at
-the offending line and column — print it as-is for a readable report.
+the offending line and column; print it as-is for a readable report.
 
 ## Read integers in every base
 

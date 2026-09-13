@@ -1,4 +1,4 @@
-# Concepts — TypeScript
+# Concepts: TypeScript
 
 Background reading: how the plugin works on the engine, the grammar model
 it uses, and why certain inputs are accepted or rejected. For steps see
@@ -21,7 +21,7 @@ that point on, the same engine parses TOML.
 ## The grammar is data
 
 The TOML grammar lives in one file, `toml-grammar.jsonic`, written in
-jsonic syntax — it *is* a relaxed-JSON document describing rules, tokens,
+jsonic syntax: it *is* a relaxed-JSON document describing rules, tokens,
 and options. At build time `embed-grammar.js` inlines that text into the
 plugin source. At load time the plugin does something neat: it parses the
 grammar text *with jsonic itself*
@@ -35,7 +35,7 @@ tn.grammar(grammarDef)
 so the grammar definition is bootstrapped by the same machinery it
 configures. Function hooks referenced in the grammar by `@name` strings
 (`@table-dive-start`, `@lte-table-dive`, …) are resolved against the
-`refs` map. A second, identical embed lives in the Go port — keeping the
+`refs` map. A second, identical embed lives in the Go port; keeping the
 grammar as shared data is what keeps the two runtimes in sync.
 
 ## Two stages: lexer then parser
@@ -48,7 +48,7 @@ adds or replaces several matchers:
 
 - a **custom string matcher** (`makeTomlStringMatcher`) that handles
   single- and double-quoted strings *and* the triple-quoted multi-line
-  forms, escape sequences, and the line-ending backslash — none of which
+  forms, escape sequences, and the line-ending backslash, none of which
   the default jsonic string lexer knows about;
 - an `#ID` **bare-key token** matched by `/^[a-zA-Z0-9_-]+/`;
 - **date / time value matchers** for the RFC-3339 shapes;
@@ -84,7 +84,7 @@ is always a plain nested object tree.
 
 ## Why date literals need special handling
 
-A value matcher fires unconditionally — so a date-shaped token like
+A value matcher fires unconditionally, so a date-shaped token like
 `1979-05-27` would be claimed as a datetime value before the `#ID` bare-key
 matcher ever runs. That is wrong when the date shape is actually a *key*,
 as in `2001-02-03 = 1` or the table header `[2002-01-02]`.
@@ -111,7 +111,7 @@ loaded, by patching `grammarDef.options.value`. The signed forms (`+nan`,
 
 Accepted (all real, all covered by the test suites):
 
-- bare, quoted, and dotted keys — including a quoted key that contains a
+- bare, quoted, and dotted keys, including a quoted key that contains a
   dot, `"a.b" = 1`, which is one key, not a path;
 - integers in decimal, hex, octal, binary, with `_` separators;
 - floats with exponents, and `nan` / `inf` with signs;
@@ -119,7 +119,7 @@ Accepted (all real, all covered by the test suites):
 - arrays (mixed types, trailing comma), inline tables, tables, nested
   tables, and array-of-tables;
 - `#` line comments, anywhere a comment is legal;
-- offset / local date-time / local-date / local-time literals — and the
+- offset / local date-time / local-date / local-time literals, and the
   same shapes used as keys.
 
 Rejected (throws with code `unexpected`):
