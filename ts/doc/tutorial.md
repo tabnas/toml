@@ -1,4 +1,4 @@
-# Tutorial — your first TOML parse
+# Tutorial: your first TOML parse
 
 This walks you from nothing to a working parse. Follow it in order; each
 step builds on the last. When you finish you will have installed the
@@ -38,7 +38,7 @@ toml.parse('a = 1')   // => { a: 1 }
 
 You wrote one key-value pair and got back an object. The order matters:
 `jsonic` supplies the base grammar, and `Toml` replaces its start rule
-with the TOML one. Reuse the `toml` instance for every parse — building it
+with the TOML one. Reuse the `toml` instance for every parse; building it
 is the expensive part.
 
 ## 3. Parse a real document
@@ -119,9 +119,9 @@ can be round-tripped.
 
 ## Where to go next
 
-- [How-to guide](guide.md) — recipes: parse a file, handle errors, share a
+- [How-to guide](guide.md). Recipes: parse a file, handle errors, share a
   parser, read dates.
-- [Reference](reference.md) — the full API, the value-mapping table, and
+- [Reference](reference.md). The full API, the value-mapping table, and
   the accepted grammar.
-- [Concepts](concepts.md) — how the plugin works on the engine and why it
+- [Concepts](concepts.md). How the plugin works on the engine and why it
   is built the way it is.

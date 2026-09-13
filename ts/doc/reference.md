@@ -1,4 +1,4 @@
-# Reference — TypeScript
+# Reference: TypeScript
 
 Complete, dry description of what `@tabnas/toml` exposes, how TOML values
 map to JavaScript, and the grammar the plugin accepts. For a tour see the
@@ -23,7 +23,7 @@ import { Toml, VERSION, type TomlOptions } from '@tabnas/toml'
 | Export        | Kind                      | Description                                              |
 | ------------- | ------------------------- | ------------------------------------------------------- |
 | `Toml`        | `Plugin` (from `@tabnas/parser`) | Installs the TOML grammar onto a `Tabnas` instance. |
-| `VERSION`     | `string`                  | This package's version. Always equals `package.json` `"version"` — a test enforces it. |
+| `VERSION`     | `string`                  | This package's version. Always equals `package.json` `"version"`; a test enforces it. |
 | `TomlOptions` | type                      | Plugin options object. Currently `{}` (no options).     |
 
 `Toml.defaults` is `{}`.
@@ -48,11 +48,11 @@ const result = toml.parse(src)
   scalar at the root; every top-level line is a key assignment or a table
   header.
 - On a syntax error `.parse` throws; the thrown error has a `code`
-  property (e.g. `'unexpected'`) and a formatted multi-line `message`.
+  property (for example `'unexpected'`) and a formatted multi-line `message`.
 
 ## Options
 
-`TomlOptions` is an empty object type — there are no user-tunable options.
+`TomlOptions` is an empty object type: there are no user-tunable options.
 The plugin's behaviour is fixed by its grammar.
 
 ## Value mapping
