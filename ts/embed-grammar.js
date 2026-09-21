@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 
-// Embeds toml-grammar.jsonic into src/toml.ts and go/toml.go.
+// Embeds toml-grammar.jsonic into src/toml.ts, go/toml.go and
+// rs/src/lib.rs.
 // Run via: npm run embed
+//
+// Every runtime holds the SAME grammar text and parses it with its own
+// jsonic at load time. Never hand-edit between the BEGIN/END markers:
+// edit toml-grammar.jsonic and re-run this script.
 
 const fs = require('fs')
 const path = require('path')
@@ -46,3 +51,18 @@ embed(
   path.join(__dirname, '..', 'go', 'toml.go'),
   'const grammarText = `\n' + grammar + '`\n'
 )
+
+// Rust: raw string (no escapes at all). An `r#"` literal ends at the first
+// `"#`, so that sequence is the one thing the content may not contain.
+// The grammar quotes with `'`, so it holds no `"` at all today; the guard
+// is here so a future edit fails loudly rather than truncating the const.
+const RS_FILE = path.join(__dirname, '..', 'rs', 'src', 'lib.rs')
+if (fs.existsSync(RS_FILE)) {
+  if (grammar.includes('"#')) {
+    console.error('Error: grammar file contains `"#`, cannot embed in a Rust r#"..."# literal')
+    process.exit(1)
+  }
+  embed(RS_FILE, 'pub(crate) const GRAMMAR_TEXT: &str = r#"\n' + grammar + '"#;')
+} else {
+  console.log('No Rust source at', RS_FILE, '- skipping')
+}

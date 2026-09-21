@@ -1,8 +1,9 @@
-input	ts	go	why
+input	ts	go	rust	why
 # divergent.tsv — where this repo's two ports DISAGREE, executed by both.
 #
 #   input  TOML source. Escapes \n \r \t \\ are decoded, as in spec/.
-#   ts,go  what each port produces: a JSON value, or ERROR:<code>, or
+#   ts,go,rust
+#          what each port produces: a JSON value, or ERROR:<code>, or
 #          ERROR:<code>@<row>:<col> when the POSITION is the disagreement.
 #   why    the audit item, and where the repair lives.
 #
@@ -49,5 +50,5 @@ input	ts	go	why
 # `go work use` / npm symlink over it, so this repo's suites run against
 # parser's `main`, NOT the `v0.8.10` its go.mod pins. Measuring against the
 # published pin gives different numbers and is not what the gate will see.
-["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	astral column unit — permanent
-["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	astral column unit — permanent
+["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
+["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent

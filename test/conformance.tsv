@@ -89,7 +89,24 @@ runtime	total	rejected	diagnosed	crashes
 # admin/scripts/link.sh (or a go.work over the siblings) before re-measuring,
 # or the number you write down will be for a build nothing runs.
 #
+# THE rust ROW REPRODUCES THE ts ROW, WHICH IS THE POINT
+#
+# The Rust port measures 278/278/0, the same three numbers as TypeScript, on
+# the same corpus. It diagnoses the key-conflict class the Go row is nine
+# short of, because it can: a grammar action there answers with an error
+# value rather than a panic, so the check costs nothing in the currency
+# these counts are kept in.
+#
+# One thing it does differently, and it changes no number. The
+# encoding/bad-utf8-* documents are not valid UTF-8 and a Rust string cannot
+# hold them, so the suite decodes them lossily and the parser sees U+FFFD.
+# That is what Node hands the TypeScript suite as well; Go is the odd one
+# out, because a Go string holds arbitrary bytes. All three rows count the
+# same outcome for those documents either way.
+#
 # MEASURED 2026-08-19 against BurntSushi/toml-test @ 9eef1b9;
-# go re-measured 2026-08-20 against the sibling checkouts.
+# go re-measured 2026-08-20 against the sibling checkouts;
+# rust measured 2026-09-21 against the same pinned corpus.
 ts	509	278	278	0
 go	509	261	261	0
+rust	509	278	278	0

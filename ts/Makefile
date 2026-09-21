@@ -1,12 +1,12 @@
-.PHONY: all build test clean embed build-ts build-go test-ts test-go clean-ts clean-go publish-go tags-go tidy-go reset
+.PHONY: all build test clean embed build-ts build-go test-ts test-go clean-ts clean-go publish-go tags-go tidy-go reset build-rs test-rs clean-rs
 
 all: build test
 
-build: build-ts build-go
+build: build-ts build-go build-rs
 
-test: test-ts test-go
+test: test-ts test-go test-rs
 
-clean: clean-ts clean-go
+clean: clean-ts clean-go clean-rs
 
 # Embed ../toml-grammar.jsonic into src/toml.ts and ../go/toml.go.
 embed:
@@ -31,6 +31,24 @@ test-go:
 
 clean-go:
 	cd ../go && go clean -cache
+
+# Rust (the crate in ../rs; the engine is a sibling checkout)
+#
+# `embed` first, as build-go has it and as npm's own `build` script gives
+# build-ts. rs/src/lib.rs carries the grammar as GRAMMAR_TEXT, the same
+# jsonic text the other two embed, and the crate parses it at load; so
+# without this, a focused build after an edit to ../toml-grammar.jsonic
+# compiles the previous text and succeeds. The drift tripwire is a test,
+# and a build target does not run it.
+build-rs: embed
+	cd ../rs && cargo build --all-targets
+
+test-rs:
+	cd ../rs && cargo test --all-targets && cargo test --doc
+	cd ../rs && cargo clippy --all-targets --all-features -- -D warnings
+
+clean-rs:
+	cd ../rs && cargo clean
 
 # Publish Go module: make publish-go V=0.1.1
 publish-go: test-go

@@ -1,8 +1,8 @@
 # Agents Guide — shared spec fixtures
 
-`spec/*.tsv` holds the cross-runtime conformance fixtures. Both runtimes run
-the same files, so a change here affects TypeScript and Go together — edit
-with that in mind.
+`spec/*.tsv` holds the cross-runtime conformance fixtures. All three
+runtimes run the same files, so a change here affects TypeScript, Go and
+Rust together — edit with that in mind.
 
 ## Format
 
@@ -36,8 +36,9 @@ is the authority; what matters here:
 
 ## The divergence register — `test/divergent.tsv`
 
-Separate from `spec/`, and read by `ts/test/divergent.test.ts` and
-`go/divergent_test.go` rather than by the shared runner.
+Separate from `spec/`, and read by `ts/test/divergent.test.ts`,
+`go/divergent_test.go` and `rs/tests/divergent_test.rs` rather than by the
+shared runner.
 
 It records the places the two ports **disagree**, with a column per port,
 and it is **not a fixture**. A fixture fails when behaviour regresses. This
@@ -50,7 +51,7 @@ audit found 29 recorded claims contradicted by execution.
 | column | meaning |
 |---|---|
 | `input` | TOML source, escape-decoded as in `spec/`. |
-| `ts`, `go` | what each port produces: a JSON value, `ERROR:<code>`, or `ERROR:<code>@<row>:<col>` when the position is the disagreement. |
+| `ts`, `go`, `rust` | what each port produces: a JSON value, `ERROR:<code>`, or `ERROR:<code>@<row>:<col>` when the position is the disagreement. |
 | `why` | the audit item, and where the repair lives. |
 
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
@@ -59,8 +60,11 @@ position; one that has it is compared on both.
 The current two rows are the **astral column unit**, and they are
 *permanent*: TypeScript counts UTF-16 code units, so an astral character
 advances the column by two, and Go counts runes, so it advances by one.
-Forced by the scan unit and recorded in `parser/DIVERGENCE.md`. Do not
-delete them on a sweep — nothing is going to close them.
+Rust counts Unicode scalar values, the same unit as a Go rune, so the
+`rust` column repeats the `go` one on both rows. There are two answers
+here and three ports. Forced by the scan unit and recorded in
+`parser/DIVERGENCE.md`. Do not delete them on a sweep — nothing is going to
+close them.
 
 They started as four rows of **audit P5**, Go advancing the error column in
 *bytes*. That defect is repaired (#51), so the two BMP rows went; the two
@@ -87,12 +91,13 @@ shared, and the vocabulary here is the one it standardises.
 
 - TypeScript: `ts/test/toml-tsv.test.ts` — `makeRunner(...).dir(...)`.
 - Go: `go/toml_tsv_test.go` — `support.Runner{...}.Dir(t, dir)`.
+- Rust: `rs/tests/parity_test.rs` — `Runner::new(...).dir(...)`.
 
 Fixtures are discovered by **listing the directory**, so a new `.tsv` runs
-in both runtimes at once. They used to be named in a list per runtime, and
+in every runtime at once. They used to be named in a list per runtime, and
 a fixture wired into one runtime only would have proved nothing.
 
-An `ERROR:` row pins the error **code** in both runtimes, with no allowances.
+An `ERROR:` row pins the error **code** in every runtime, with no allowances.
 Go used to accept any rejection, which hid a divergence on `"unterminated`:
 `unexpected` in TypeScript, `unterminated_string` in Go. Tightening the
 comparison surfaced it; running it down showed TypeScript's string matcher
@@ -101,16 +106,25 @@ from the grammar tripping over the one leftover character, not from any
 diagnosis, and where nothing was left over malformed TOML parsed silently.
 TypeScript is fixed; both runtimes answer `unterminated_string`.
 
+## The conformance counts — `test/conformance.tsv`
+
+Also separate from `spec/`, and read by every runtime's half of the
+BurntSushi/toml-test harness: `ts/test/toml.test.ts`,
+`go/toml_valid_test.go` and `rs/tests/toml_valid_test.rs`. One row per
+runtime, and the numbers are **exact, not floors**, for the reasons that
+file's own header gives. The `rust` row reproduces the `ts` row.
+
 ## Rules
 
 - Prefer adding a fixture here over a one-off in-language assertion when a
   case is expressible as input → output. That is what keeps the two runtimes
   honest against each other.
-- TypeScript is canonical. If the two runtimes disagree, the TS behaviour is
+- TypeScript is canonical. If the runtimes disagree, the TS behaviour is
   the expected value — unless Go has exposed a genuine TS defect, or the
   difference is one of the intentional divergences the root `AGENTS.md`
   records, which stay out of these shared fixtures.
-- A new fixture must pass in BOTH runtimes before it counts:
-  `go test ./...` from `go/`, and **`npm run build && npm test`** from `ts/`.
-  Plain `npm test` runs the previously compiled `dist-test/`, so it can pass
-  without ever loading a newly added fixture.
+- A new fixture must pass in EVERY runtime before it counts:
+  `go test ./...` from `go/`, `cargo test --all-targets` from `rs/`, and
+  **`npm run build && npm test`** from `ts/`. Plain `npm test` runs the
+  previously compiled `dist-test/`, so it can pass without ever loading a
+  newly added fixture.
