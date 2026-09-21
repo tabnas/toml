@@ -40,12 +40,22 @@ fn time_in_range(hour: i32, minute: i32, second: i32) -> bool {
 /// matched; a mismatch means the two have drifted apart, and the value is
 /// let through rather than silently rejected on a shape this code does not
 /// actually understand.
+///
+/// `[0-9]` rather than `\d`, for the reason `datematcher::isodate_re`
+/// gives: the `regex` crate's `\d` is the Unicode `Nd` category and the
+/// JavaScript and Go originals match ASCII digits alone. Here the wider
+/// class is not merely permissive, it reverses the answer: a group of
+/// Arabic-Indic digits captures, [`num`] cannot parse it, the component
+/// reads as -1, and a month of -1 fails the range check, so a value the
+/// canonical port keeps as text was rejected as `invalid_datetime`.
 fn isodate_parts() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(
-            r"^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:[Zz]|[-+](\d{2}):(\d{2}))?)?$",
-        )
+        Regex::new(concat!(
+            r"^([0-9]{4})-([0-9]{2})-([0-9]{2})",
+            r"(?:[Tt ]([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?",
+            r"(?:[Zz]|[-+]([0-9]{2}):([0-9]{2}))?)?$",
+        ))
         .expect("the isodate capture pattern is a literal and compiles")
     })
 }
@@ -53,7 +63,7 @@ fn isodate_parts() -> &'static Regex {
 fn localtime_parts() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"^(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$")
+        Regex::new(r"^([0-9]{2}):([0-9]{2})(?::([0-9]{2})(?:\.[0-9]+)?)?$")
             .expect("the localtime capture pattern is a literal and compiles")
     })
 }

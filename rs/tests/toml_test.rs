@@ -181,6 +181,36 @@ fn toml_time_rejects_an_ordinary_value() {
     assert!(toml_time(&Value::String("x".into())).is_none());
 }
 
+/// Only ASCII digits make a date or a time.
+///
+/// The `regex` crate reads `\d` as the whole Unicode `Nd` category, while
+/// the JavaScript patterns this port comes from are compiled without the
+/// `u` flag and the Go ones are RE2, so in both of those `\d` is `0-9`.
+/// Every date and time pattern here is therefore written `[0-9]`: the two
+/// matcher shapes in `datematcher`, the two capture shapes in
+/// `daterange`, and the grammar document's own `match.value` patterns,
+/// which `adjust_value_matchers` respells.
+///
+/// The key half and the `a = ٢٠٢٤-٠١-٠١` value are pinned in the shared
+/// fixtures (`test/spec/errors.tsv`, `test/spec/basic-values.tsv`). This
+/// test is what the fixtures cannot say: a `TomlTime` and a string
+/// flatten to the SAME JSON, so only the KIND distinguishes a local time
+/// from the text that merely looks like one.
+#[test]
+fn only_ascii_digits_make_a_date_or_time() {
+    for src in [
+        "a = \u{662}\u{660}\u{662}\u{664}-\u{660}\u{661}-\u{660}\u{661}",
+        "a = \u{661}\u{662}:\u{663}\u{664}",
+        "a = \u{661}\u{662}:\u{663}\u{664}:\u{663}\u{664}",
+    ] {
+        let value = field(src, "a");
+        assert!(
+            toml_time(&value).is_none(),
+            "{src}: non-ASCII digits produced {value:?}"
+        );
+    }
+}
+
 // --- the leading BOM ----------------------------------------------------
 
 /// A TOML document may start with a UTF-8 byte order mark and it is
@@ -338,4 +368,145 @@ fn the_embedded_grammar_is_the_file_on_disk() {
          never hand-edit between the BEGIN/END EMBEDDED markers.",
         path.display()
     );
+}
+
+/// Both `build-rs` targets regenerate the embedded grammar first.
+///
+/// The test above is the drift tripwire, and it is a TEST: it does not
+/// run on a build. So a focused `make build-rs` after an edit to
+/// `toml-grammar.jsonic` compiled the GRAMMAR_TEXT already in
+/// `src/lib.rs`, reported success, and left the stale text in place,
+/// where `build-go` has named `embed` as a prerequisite all along and
+/// `build-ts` gets it from npm's own `build` script.
+#[test]
+fn the_rust_build_targets_embed_the_grammar_first() {
+    for makefile in ["Makefile", "ts/Makefile"] {
+        let path = repo_dir().join(makefile);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        let rule = text
+            .lines()
+            .find(|line| line.starts_with("build-rs:"))
+            .unwrap_or_else(|| panic!("{makefile} has no build-rs rule"));
+        assert!(
+            rule.split(':')
+                .nth(1)
+                .is_some_and(|after| after.split_whitespace().any(|want| "embed" == want)),
+            "{makefile}: `{rule}` does not depend on embed, so a focused Rust build \
+             compiles whatever grammar text src/lib.rs already holds"
+        );
+    }
+}
+
+// --- the setup instructions ---------------------------------------------
+
+/// The sibling checkouts named in `[dependencies]` or `[dev-dependencies]`
+/// of one manifest, as bare repository names: `path = "../../jsonic/rs"`
+/// reads as `jsonic`.
+fn siblings_of(manifest: &std::path::Path, section: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(manifest)
+        .unwrap_or_else(|error| panic!("read {}: {error}", manifest.display()));
+    let mut names = Vec::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            inside = line == format!("[{section}]");
+            continue;
+        }
+        let Some(rest) = line.split("path = \"").nth(1) else {
+            continue;
+        };
+        let Some(path) = rest.split('"').next() else {
+            continue;
+        };
+        if inside {
+            if let Some(name) = path
+                .strip_prefix("../../")
+                .and_then(|tail| tail.strip_suffix("/rs"))
+            {
+                names.push(name.to_string());
+            }
+        }
+    }
+    names
+}
+
+/// Every sibling checkout a build needs, transitively, because a path
+/// dependency of a path dependency is just as required as a direct one.
+fn required_siblings(repo: &std::path::Path, section: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut queue = siblings_of(&repo.join("rs").join("Cargo.toml"), section);
+    while let Some(name) = queue.pop() {
+        if found.contains(&name) {
+            continue;
+        }
+        let manifest = repo
+            .parent()
+            .expect("the repository has a parent directory")
+            .join(&name)
+            .join("rs")
+            .join("Cargo.toml");
+        // Only a checkout that is actually present can be walked further.
+        // The gate in ci/rust/run.sh is what insists they all are.
+        if manifest.is_file() {
+            queue.extend(siblings_of(&manifest, "dependencies"));
+        }
+        found.push(name);
+    }
+    found.sort();
+    found
+}
+
+/// Both Rust setup sections name every sibling checkout the build needs.
+///
+/// `tabnas-jsonic` takes the strict-JSON core as its OWN path dependency
+/// on `../../json/rs`, and cargo reads every manifest in the graph before
+/// it compiles anything, so a reader who cloned only the siblings the two
+/// pages used to name got `failed to get tabnas-json as a dependency of
+/// package tabnas-jsonic` and never reached an example. Deriving the list
+/// from the manifests rather than restating it is what keeps the pages
+/// right the next time a sibling gains one.
+#[test]
+fn the_setup_instructions_name_every_sibling_checkout() {
+    let repo = repo_dir();
+    let build = required_siblings(&repo, "dependencies");
+    assert!(
+        build.contains(&"json".to_string()),
+        "expected the JSON core among the build siblings, got {build:?}"
+    );
+
+    for page in ["README.md", "rs/README.md"] {
+        let path = repo.join(page);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        for name in &build {
+            let named = format!("github.com/tabnas/{name}");
+            // `tabnas/jsonic` contains `tabnas/json`, so the mention has
+            // to end where the name does.
+            assert!(
+                text.match_indices(&named).any(|(at, _)| {
+                    text[at + named.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(|next| !next.is_ascii_alphanumeric() && '-' != next)
+                }),
+                "{page} does not tell the reader to clone {named}, \
+                 which the build needs: siblings {build:?}"
+            );
+        }
+    }
+
+    // The fixture runner is a development dependency, so only the crate's
+    // own page promises it.
+    let test_only = required_siblings(&repo, "dev-dependencies");
+    let path = repo.join("rs").join("README.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    for name in &test_only {
+        assert!(
+            text.contains(&format!("github.com/tabnas/{name}")),
+            "rs/README.md does not name the test-only sibling {name}"
+        );
+    }
 }

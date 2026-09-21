@@ -17,6 +17,11 @@ path = "src/lib.rs"
 # https://github.com/tabnas/parser and https://github.com/tabnas/jsonic
 # next to this repo. Neither crate is published, so there is no registry
 # version to fall back on.
+#
+# Clone https://github.com/tabnas/json as well. It gets no entry here,
+# because it is tabnas-jsonic that depends on it, but cargo reads the
+# whole manifest graph before it compiles anything, so without that
+# checkout nothing here resolves.
 tabnas = { path = "../../parser/rs" }
 tabnas-jsonic = { path = "../../jsonic/rs" }
 indexmap = "2"

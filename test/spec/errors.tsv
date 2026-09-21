@@ -58,3 +58,13 @@ d = 2006-01-01T00:60:00-00:00	ERROR:invalid_datetime
 d = 2006-01-01T00:00:61-00:00	ERROR:invalid_datetime
 d = 1985-06-18 17:04:07+25:00	ERROR:invalid_datetime
 d = 1985-06-18 17:04:07+12:60	ERROR:invalid_datetime
+# NON-ASCII DIGITS are not digits. The date and time shapes are ASCII-only in
+# every runtime: JavaScript compiles them without the `u` flag and Go's RE2 has
+# no Unicode `\d`, so `٢٠٢٤-٠١-٠١` (Arabic-Indic) is not date-shaped and is not
+# a bare key either, since `#ID` is `[a-zA-Z0-9_-]+`. Rust's `regex` crate does
+# read `\d` as the Unicode Nd category, so the port's matchers claimed these and
+# -- in a key context, where the matcher emits `#ID` directly -- ACCEPTED them
+# as bare keys that TOML does not allow.
+٢٠٢٤-٠١-٠١ = 1	ERROR:unexpected
+١٢:٣٤ = 1	ERROR:unexpected
+[٢٠٢٤-٠١-٠١]\nx = 1	ERROR:unexpected

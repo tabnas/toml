@@ -31,6 +31,14 @@ dev only) are **path dependencies on sibling checkouts**
 (`../../parser/rs`, `../../jsonic/rs`, `../../support/rs`). None is
 published, so there is no registry version to fall back on.
 
+A FOURTH checkout, `../../json/rs`, is needed and is named by no entry
+here: `tabnas-jsonic` takes the strict-JSON core as its own path
+dependency. Cargo reads the whole manifest graph before compiling, so
+without it every cargo command fails at `failed to get tabnas-json as a
+dependency of package tabnas-jsonic`. `ci/rust/run.sh` checks all four,
+and `the_setup_instructions_name_every_sibling_checkout` in
+`tests/toml_test.rs` holds both READMEs to the set the manifests imply.
+
 ```bash
 cargo build --all-targets
 cargo test --all-targets && cargo test --doc
@@ -109,7 +117,7 @@ fixture: without it, a second `[[a]]` never starts a new element.
 ## What the grammar document needs before it is installed
 
 `grammar_document` parses `../toml-grammar.jsonic` with a standard jsonic
-instance, exactly as the other two ports do, and then makes four
+instance, exactly as the other two ports do, and then makes five
 adjustments. Each is in `lib.rs` next to its reason; the short version:
 
 1. **`integerize`.** Every number in a jsonic parse result is an `f64`,
@@ -119,19 +127,56 @@ adjustments. Each is in `lib.rs` next to its reason; the short version:
 2. **`adjust_token_sets`.** The canonical token-set form pads a set to
    four slots with nulls; this loader takes the members alone and rejects
    a null entry.
-3. **`adjust_lex_matchers`.** The grammar's `lex.match.string.make` has
+3. **`adjust_value_matchers`.** The date and time patterns in
+   `match.value` are respelled with `[0-9]`. See "ASCII digits" below.
+4. **`adjust_lex_matchers`.** The grammar's `lex.match.string.make` has
    no `order`, because in the canonical engine the string matcher is a
    named builtin being REPLACED. Here the builtin bands are fixed and a
    custom matcher is placed among them by order, so one is supplied. The
    BOM and date matchers are added here rather than to the shared grammar
    text, because that text is read by two ports that install their own.
-4. **`adjust_messages`.** The `error` and `hint` templates, kept in step
+5. **`adjust_messages`.** The `error` and `hint` templates, kept in step
    with the TypeScript registration word for word.
 
 `register_special_floats` runs AFTER the document, because a keyword
 value definition takes a literal `val` and never a function reference, so
 there is no `@`-name for a number JSON cannot spell. Both other ports
 patch `nan` and `inf` in code for the same reason.
+
+## ASCII digits: never `\d` in a pattern this crate compiles
+
+The `regex` crate is Unicode-aware by default, so `\d` is the whole `Nd`
+category, `\w` is `Alphabetic|M|Nd|Pc`, `\s` is `White_Space` and `\b`
+sits on those. The JavaScript this port comes from compiles its patterns
+WITHOUT the `u` flag and the Go port is RE2, so in both of those every
+one of those classes is ASCII. Porting such a pattern verbatim silently
+widens it.
+
+It is not a theoretical widening. `٢٠٢٤-٠١-٠١ = 1` (Arabic-Indic digits)
+was ACCEPTED as a bare key here, because in a key context the date
+matcher emits what it matched as `#ID` directly, bypassing the `#ID`
+token pattern that is `[a-zA-Z0-9_-]+`; both other runtimes answer
+`unexpected`. In a value context the same input was rejected as
+`invalid_datetime`, because `daterange` captured the components and then
+could not parse them, so the month read as -1.
+
+So every pattern this crate compiles spells its digits `[0-9]`: the two
+shapes in `datematcher`, the two capture shapes in `daterange`, and the
+two `match.value` patterns the grammar text declares, which
+`adjust_value_matchers` respells from the `datematcher` patterns
+themselves so the two cannot drift. The shared grammar text keeps `\d`,
+which is correct for the runtimes that read it.
+
+`only_ascii_digits_make_a_date_or_time` in `tests/toml_test.rs` pins the
+part no fixture can: a `TomlTime` and a string flatten to the same JSON,
+so only the KIND separates a local time from text that looks like one.
+The rest is in `../test/spec/errors.tsv` and
+`../test/spec/basic-values.tsv`.
+
+Nothing else in the crate has this hazard: `strmatcher` uses
+`is_ascii_alphanumeric`, `is_ascii_hexdigit` and `char::to_digit`, all
+three ASCII-only and all three matching what the canonical `isHexadecimal`
+and `parseInt` do.
 
 ## What this port does NOT need
 
@@ -199,6 +244,18 @@ when the corpus is missing and FAILS if it still is. Do not reintroduce a
 skip: both older suites used to skip when the corpus was absent, which is
 exactly what CI looked like, so neither had ever executed there while the
 job reported green.
+
+The fetch runs AT MOST ONCE, behind a `OnceLock` in `ensure_corpus`. The
+script is not concurrency-safe: it removes a destination that is not a
+git checkout and then clones into it, so on a fresh checkout `toml_valid`
+and `toml_invalid` each saw the corpus absent, each launched it, and the
+loser's `git clone` exited 128 into the directory the winner had just
+made. A process-local guard is enough BECAUSE both callers are in this
+one integration-test binary, which the default harness runs as two
+threads of one process; add a caller in another `tests/*.rs`, or run the
+suite under a test-per-process runner, and only a lock on the
+destination serialises them.
+`the_corpus_is_fetched_once_however_many_tests_ask` is what measures it.
 
 The `rust` row of `../test/conformance.tsv` is EXACT, not a floor, for
 the reason that file's header gives. It reproduces the `ts` row.

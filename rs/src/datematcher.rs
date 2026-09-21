@@ -19,19 +19,31 @@ use crate::values::{isodate_time, localtime_time};
 
 /// The date / time shapes, the same ones the grammar's regexp value
 /// matchers recognise.
+///
+/// Spelled `[0-9]` rather than `\d`. The `regex` crate reads `\d` as the
+/// whole Unicode `Nd` category, while the JavaScript original is compiled
+/// without the `u` flag and the Go port is RE2, so in both of those `\d`
+/// is ASCII `0-9` alone. A Unicode `\d` here claims `٢٠٢٤-٠١-٠١`, and in
+/// a key context this matcher emits what it claimed as an `#ID`, so the
+/// port accepted a bare key of Arabic-Indic digits that TOML does not
+/// allow and that both other runtimes reject as unexpected characters.
 pub(crate) fn isodate_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"^\d\d\d\d-\d\d-\d\d([Tt ]\d\d:\d\d(:\d\d(\.\d+)?)?([Zz]|[-+]\d\d:\d\d)?)?")
-            .expect("the isodate pattern is a literal and compiles")
+        Regex::new(concat!(
+            r"^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]",
+            r"([Tt ][0-9][0-9]:[0-9][0-9](:[0-9][0-9](\.[0-9]+)?)?",
+            r"([Zz]|[-+][0-9][0-9]:[0-9][0-9])?)?",
+        ))
+        .expect("the isodate pattern is a literal and compiles")
     })
 }
 
-/// See [`isodate_re`].
+/// See [`isodate_re`], including why the digits are written out.
 pub(crate) fn localtime_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"^\d\d:\d\d(:\d\d(\.\d+)?)?")
+        Regex::new(r"^[0-9][0-9]:[0-9][0-9](:[0-9][0-9](\.[0-9]+)?)?")
             .expect("the localtime pattern is a literal and compiles")
     })
 }

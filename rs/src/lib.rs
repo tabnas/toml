@@ -271,6 +271,7 @@ fn grammar_document() -> Result<Json, GrammarError> {
     };
 
     adjust_token_sets(options);
+    adjust_value_matchers(options);
     adjust_lex_matchers(options);
     adjust_messages(options);
 
@@ -313,6 +314,53 @@ fn adjust_token_sets(options: &mut Map<String, Json>) {
     for members in sets.values_mut() {
         if let Some(list) = members.as_array_mut() {
             list.retain(|member| member.is_string());
+        }
+    }
+}
+
+/// Respell the grammar's `match.value` date and time patterns with ASCII
+/// digit classes.
+///
+/// The shared grammar text writes them with `\d`, which is right for the
+/// two runtimes that read it: JavaScript compiles them without the `u`
+/// flag and Go's RE2 has no Unicode `\d` at all, so in both `\d` is
+/// `0-9`. The `regex` crate reads `\d` as the whole Unicode `Nd`
+/// category, so the same text compiled here matches `٢٠٢٤-٠١-٠١` and
+/// turns it into a `local-date` value, where both other runtimes leave it
+/// as ordinary text.
+///
+/// The canonical port replaces these two matchers outright once the
+/// document is in, and so, in effect, does this one: the native matchers
+/// in [`datematcher`] are ordered ahead of the value band. But the
+/// grammar's own declarations stay installed here, and a value-band
+/// matcher is still consulted when the native one declines, so they have
+/// to agree with it rather than merely be shadowed by it. Taking the
+/// pattern from the native matcher itself is what keeps the two in step.
+fn adjust_value_matchers(options: &mut Map<String, Json>) {
+    let Some(values) = options
+        .get_mut("match")
+        .and_then(Json::as_object_mut)
+        .and_then(|matchers| matchers.get_mut("value"))
+        .and_then(Json::as_object_mut)
+    else {
+        return;
+    };
+    for (name, ascii) in [
+        ("isodate", datematcher::isodate_re().as_str()),
+        ("localtime", datematcher::localtime_re().as_str()),
+    ] {
+        let Some(entry) = values.get_mut(name).and_then(Json::as_object_mut) else {
+            continue;
+        };
+        // Only a regex reference is respelled. A `@name` function
+        // reference means the grammar has moved on and the substitution
+        // would no longer be describing the same thing.
+        if entry
+            .get("match")
+            .and_then(Json::as_str)
+            .is_some_and(|reference| reference.starts_with("@/"))
+        {
+            entry.insert("match".to_string(), json!(format!("@/{ascii}/")));
         }
     }
 }

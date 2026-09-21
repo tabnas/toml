@@ -40,8 +40,9 @@ go get github.com/tabnas/toml/go@latest
 
 Rust: the crate is not published, because it takes the engine and the
 jsonic core as path dependencies. Clone
-`https://github.com/tabnas/parser` and `https://github.com/tabnas/jsonic`
-beside this repository and point at all three:
+`https://github.com/tabnas/parser`, `https://github.com/tabnas/jsonic`
+and `https://github.com/tabnas/json` beside this repository, then point
+at three of them:
 
 ```toml
 [dependencies]
@@ -49,6 +50,12 @@ tabnas-toml = { path = "../toml/rs" }
 tabnas-jsonic = { path = "../jsonic/rs" }
 tabnas = { path = "../parser/rs" }
 ```
+
+`json` carries no entry of its own: it is how `tabnas-jsonic` reaches
+the strict-JSON core, at its own `../../json/rs`. Cargo reads every
+manifest in the graph before it compiles anything, so a checkout without
+it fails at `tabnas-json` while resolving, not at a missing item in some
+later build.
 
 ## One tiny example
 

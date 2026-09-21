@@ -95,11 +95,11 @@ matcher.
 
 ## Install
 
-Neither the engine nor the jsonic core is published to a registry, so
-both are consumed as **sibling checkouts**, the standard tabnas
-development model. Clone `https://github.com/tabnas/parser` and
-`https://github.com/tabnas/jsonic` next to this repository and point at
-them:
+None of these crates is published to a registry, so they are consumed as
+**sibling checkouts**, the standard tabnas development model. Clone all
+three of `https://github.com/tabnas/parser`,
+`https://github.com/tabnas/jsonic` and `https://github.com/tabnas/json`
+next to this repository, then point at the two you name directly:
 
 ```toml
 [dependencies]
@@ -111,9 +111,19 @@ tabnas = { path = "../parser/rs" }
 All three entries are needed for the examples above. A crate's
 dependencies are not passed on to its dependents, so `tabnas-toml` alone
 does not put `tabnas` or `tabnas_jsonic` in your extern prelude. Only
-`TomlError` is re-exported. The test suite additionally needs
-`https://github.com/tabnas/support` beside the repository, for the shared
-fixture runner.
+`TomlError` is re-exported.
+
+`json` is the one checkout with no entry in that table, and it is not
+optional: `tabnas-jsonic` reaches the strict-JSON core through its own
+path dependency on `../../json/rs`. Cargo reads every manifest in the
+graph before it compiles anything, so without that checkout the build
+stops at `failed to get tabnas-json as a dependency of package
+tabnas-jsonic` while resolving, and no example is ever reached.
+
+Running this crate's own test suite needs a fourth checkout,
+`https://github.com/tabnas/support`, which holds the shared fixture
+loader and runner. It is a development dependency, so a crate that only
+consumes the library does not need it.
 
 ## Differences from the canonical TypeScript
 

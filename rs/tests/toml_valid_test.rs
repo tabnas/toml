@@ -28,6 +28,9 @@ use std::collections::BTreeMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::thread;
 
 use serde_json::{json, Value as Json};
 use tabnas_support::{load_spec, SpecOptions};
@@ -92,7 +95,41 @@ fn read_conformance(runtime: &str) -> Conformance {
 /// skips: if the corpus cannot be obtained the test FAILS, because a
 /// conformance test that silently does not run reports a green tick that
 /// is a lie.
+///
+/// AT MOST ONE FETCH RUNS. `toml_valid` and `toml_invalid` are the only
+/// two callers and they are in THIS integration-test binary, so the
+/// default harness runs them as two THREADS of one process: a
+/// process-local `OnceLock` is the whole guard they need, and a file lock
+/// would be answering a question this binary does not ask. Were a caller
+/// ever added in another `tests/*.rs`, or were the suite run under a
+/// test-per-process runner, the two fetches would be in different
+/// processes again and only a lock on the destination would serialise
+/// them.
+///
+/// Unguarded, both threads saw the corpus absent and both launched
+/// `fetch-toml-test.sh` against the same destination. The script is not
+/// concurrency-safe: it removes a destination that is not a git checkout
+/// and then clones into it, so the second invocation cloned into a
+/// directory the first had just created, `git clone` exited 128, and
+/// whichever test lost the race failed with "corpus is MISSING and could
+/// not be fetched" on a fresh checkout.
 fn ensure_corpus() -> PathBuf {
+    static CORPUS: OnceLock<PathBuf> = OnceLock::new();
+    // `get_or_init` runs the closure on one thread and blocks the rest
+    // until it returns, which is exactly the serialisation the fetch
+    // needs. A panic inside it leaves the cell uninitialised, so the next
+    // caller retries and fails just as loudly rather than reading a
+    // half-fetched corpus.
+    CORPUS.get_or_init(fetch_corpus).clone()
+}
+
+/// How many times [`fetch_corpus`] has run, which is what
+/// `the_corpus_is_fetched_once_however_many_tests_ask` reads.
+static FETCHES: AtomicUsize = AtomicUsize::new(0);
+
+/// The body of [`ensure_corpus`], run once.
+fn fetch_corpus() -> PathBuf {
+    FETCHES.fetch_add(1, Ordering::SeqCst);
     let root = suite_root();
     let present = || {
         ["valid", "invalid"]
@@ -106,8 +143,13 @@ fn ensure_corpus() -> PathBuf {
     let script = fetch_script();
     let status = Command::new("bash").arg(&script).status();
     let ran = matches!(status, Ok(status) if status.success());
+    // A failed script is only fatal if the corpus is still not there. The
+    // TypeScript and Go suites fetch into this same destination, so a
+    // `make test` that overlaps them can fail this invocation while
+    // leaving a complete, pinned checkout behind; what the suite needs is
+    // the corpus, not the exit code.
     assert!(
-        ran,
+        ran || present(),
         "BurntSushi/toml-test conformance corpus is MISSING and could not be fetched.\n  \
          suite:  {SUITE_URL} @ {SUITE_PIN}\n  \
          expect: {}/tests/{{valid,invalid}}\n  \
@@ -124,6 +166,40 @@ fn ensure_corpus() -> PathBuf {
         root.display()
     );
     root
+}
+
+/// However many tests ask for the corpus, and however concurrently, the
+/// fetch runs at most once.
+///
+/// Without the `OnceLock` in [`ensure_corpus`] this counts one fetch per
+/// caller, which on a fresh checkout is one `fetch-toml-test.sh` per
+/// caller against the same destination. The script removes a destination
+/// that is not a git checkout and then clones into it, so the loser of
+/// that race cloned into a directory the winner had just created, `git
+/// clone` exited 128, and the conformance run failed nondeterministically
+/// while claiming the corpus could not be fetched.
+///
+/// More threads than the two halves, so the guard is measured rather than
+/// merely happening to hold for two.
+#[test]
+fn the_corpus_is_fetched_once_however_many_tests_ask() {
+    let wanted = ensure_corpus();
+    let asked: Vec<PathBuf> = thread::scope(|scope| {
+        let handles: Vec<_> = (0..8).map(|_| scope.spawn(ensure_corpus)).collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("ensure_corpus does not panic"))
+            .collect()
+    });
+
+    for (index, root) in asked.iter().enumerate() {
+        assert_eq!(&wanted, root, "caller {index} got a different corpus root");
+    }
+    assert_eq!(
+        1,
+        FETCHES.load(Ordering::SeqCst),
+        "the corpus fetch ran more than once, so concurrent callers can race the fetch script"
+    );
 }
 
 /// Every `.toml` under `root`, by its corpus name: the path stem relative
