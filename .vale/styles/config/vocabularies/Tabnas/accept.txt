@@ -13,12 +13,14 @@
 [Dd]atetime
 [Dd]atetimes
 [Dd]iataxis
+[Ee]num
 [Ii]nlines
 [Jj]sonic
 [Ll]exed
 [Ll]exing
 [Ll]ookahead
 [Ll]ossy
+lockfile
 [Mm]atchers
 [Nn]pm
 [Pp]repends

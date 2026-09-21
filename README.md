@@ -10,8 +10,9 @@
 A [TOML](https://toml.io) parser built as a grammar plugin on the
 [tabnas](https://github.com/tabnas/parser) engine and the
 [jsonic](https://github.com/tabnas/jsonic) relaxed-JSON grammar. One
-grammar, two runtimes: a TypeScript/JavaScript plugin and a Go port that
-parse the same syntax into native objects/maps.
+grammar, three runtimes: a TypeScript/JavaScript plugin, a Go port and a
+Rust port that parse the same syntax into native objects, maps and
+values.
 
 Docs, guides, the error reference and the playground: **[tabnas.dev](https://tabnas.dev)**.
 
@@ -19,8 +20,9 @@ Docs, guides, the error reference and the playground: **[tabnas.dev](https://tab
 |---|---|
 | [`ts/`](ts/) | TypeScript / JavaScript implementation (`@tabnas/toml`). |
 | [`go/`](go/) | Go port (`github.com/tabnas/toml/go`). |
-| [`toml-grammar.jsonic`](toml-grammar.jsonic) | The single shared grammar, embedded into both. |
-| [`test/spec/`](test/spec/) | Shared conformance fixtures, run by both runtimes. |
+| [`rs/`](rs/) | Rust port (crate `tabnas-toml`, library `tabnas_toml`). |
+| [`toml-grammar.jsonic`](toml-grammar.jsonic) | The single shared grammar, embedded into all three. |
+| [`test/spec/`](test/spec/) | Shared conformance fixtures, run by every runtime. |
 
 ## Install
 
@@ -34,6 +36,18 @@ Go:
 
 ```sh
 go get github.com/tabnas/toml/go@latest
+```
+
+Rust: the crate is not published, because it takes the engine and the
+jsonic core as path dependencies. Clone
+`https://github.com/tabnas/parser` and `https://github.com/tabnas/jsonic`
+beside this repository and point at all three:
+
+```toml
+[dependencies]
+tabnas-toml = { path = "../toml/rs" }
+tabnas-jsonic = { path = "../jsonic/rs" }
+tabnas = { path = "../parser/rs" }
 ```
 
 ## One tiny example
@@ -67,6 +81,13 @@ name = "Tom"
 // result == map[string]any{"title": "TOML Example", "owner": map[string]any{"name": "Tom"}}
 ```
 
+Rust:
+
+```rust
+let value = tabnas_toml::parse("title = \"TOML Example\"\n[owner]\nname = \"Tom\"")?;
+// value.to_string() == r#"{"title":"TOML Example","owner":{"name":"Tom"}}"#
+```
+
 ## Documentation
 
 The docs follow the [Diataxis](https://diataxis.fr) framework: one file
@@ -80,7 +101,9 @@ per purpose, per language:
 | Concepts (how & why) | [ts/doc/concepts.md](ts/doc/concepts.md) | [go/doc/concepts.md](go/doc/concepts.md) |
 
 The Go [concepts](go/doc/concepts.md) page includes a "Differences from
-the TS version" section (value types, API shape, known differences).
+the TS version" section (value types, API shape, known differences). The
+Rust crate's [README](rs/README.md) carries the same section for that
+port.
 
 ## Grammar diagram
 
