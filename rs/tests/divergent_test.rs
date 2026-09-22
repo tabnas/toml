@@ -15,13 +15,13 @@
 // WHY THE RUNNER IS LOCAL, as it is in the other two halves.
 //
 // `tabnas_support::Register` compares two cells by their error CODE and
-// drops the `@row:col` suffix. Every row of THIS register is a positional
-// disagreement, and all three ports raise `unexpected` on both inputs, so
-// that comparator reads every row as "records no divergence" and the file
-// asserts nothing. That is the precise failure the Go half's own comment
-// describes arriving through a dependency (tabnas/support#12), and the
-// reason both other halves parse the cell here rather than asking the
-// shared library for it. The cell format is this repo's contract,
+// drops the `@row:col` suffix. The astral rows of THIS register are
+// positional disagreements on one code, `unexpected`, so that comparator
+// reads them as "records no divergence" and they assert nothing. That is
+// the precise failure the Go half's own comment describes arriving
+// through a dependency (tabnas/support#12), and the reason both other
+// halves parse the cell here rather than asking the shared library for
+// it. The cell format is this repo's contract,
 // documented in `../test/AGENTS.md`, so this repo reads it.
 
 mod common;

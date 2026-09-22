@@ -232,9 +232,9 @@ three ports, with the repair direction recorded as Go's.
 
 `tests/divergent_test.rs` carries its own comparator rather than using
 `tabnas_support::Register`, and so do the other two halves. That library
-compares two cells by error CODE and drops the `@row:col` suffix; every
-row of this register is a positional disagreement on the same code, so it
-reads every row as "records no divergence" and the file asserts nothing.
+compares two cells by error CODE and drops the `@row:col` suffix; the
+astral rows of this register are positional disagreements on one code, so
+it reads them as "records no divergence" and they assert nothing.
 `same_expectation_reads_the_position` pins the comparator, because a
 comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,

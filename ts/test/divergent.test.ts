@@ -1,11 +1,12 @@
 /* Copyright (c) 2026 Richard Rodger and other contributors, MIT License */
 
-// The divergence register: where this repo's two ports DISAGREE, executed.
+// The divergence register: where this repo's ports DISAGREE, executed.
 //
-// `go/divergent_test.go` runs the SAME file and reads the other column.
+// `go/divergent_test.go` and `rs/tests/divergent_test.rs` run the SAME
+// file and read their own columns.
 //
 // WHY THIS IS NOT A FIXTURE. A fixture fails when behaviour REGRESSES. This
-// fails BOTH ways: when a port is repaired to agree with the other, the row
+// fails BOTH ways: when a port is repaired to agree with another, the row
 // still claims they differ, so the suite goes red and names the row to
 // delete. A divergence recorded as a passing test of current behaviour
 // survives its own repair — the port is fixed, the test is updated, and the

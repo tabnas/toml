@@ -1,5 +1,6 @@
 input	ts	go	rust	why
-# divergent.tsv — where this repo's two ports DISAGREE, executed by both.
+# divergent.tsv — where this repo's three ports DISAGREE, executed by all
+# three.
 #
 #   input  TOML source. Escapes \n \r \t \\ are decoded, as in spec/.
 #   ts,go,rust
@@ -8,7 +9,7 @@ input	ts	go	rust	why
 #   why    the audit item, and where the repair lives.
 #
 # NOT A FIXTURE. A fixture fails when behaviour REGRESSES. This fails BOTH
-# ways: when a port is repaired to agree with the other, the row still
+# ways: when a port is repaired to agree with another, the row still
 # claims they differ, so the suite goes red and names the row to delete. A
 # divergence recorded as a passing test of current behaviour survives its
 # own repair, with nothing red — which is how the 2026-08 audit found 29
