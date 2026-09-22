@@ -225,8 +225,8 @@ as `parseInt` does. Narrowing it to real hex digits would change which
 documents parse: `"\u12g4"` is U+0012 in TypeScript and here, and
 `invalid_unicode` in Go. That is a TypeScript/Go disagreement this port
 did not create and does not adjudicate; it reproduces TypeScript, which
-is the rule. It is not in `../test/divergent.tsv` because measuring the
-two cells there means running those two ports, and nothing here can.
+is the rule. It is a row of `../test/divergent.tsv` now, measured in all
+three ports, with the repair direction recorded as Go's.
 
 ## The divergence register has a local runner
 

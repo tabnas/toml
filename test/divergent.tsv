@@ -81,3 +81,24 @@ input	ts	go	rust	why
 ["abc	ERROR:unterminated_string@1:2	ERROR:unterminated_string@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
 ["tbl\n"]	ERROR:unprintable@1:2	ERROR:unprintable@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
 a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unexpected@1:22	bad token in lookahead: engine repair in tabnas/parser rs
+#
+# --- A string escape where the three ports are not unanimous -------------
+# `\u12g4` is a lax hexadecimal scan. The canonical `isHexadecimal`
+# accepts every ASCII letter and `parseInt` then reads the longest hex
+# PREFIX, so TypeScript answers U+0012 and swallows the rest; the Rust port
+# reproduces it deliberately, since TypeScript is canonical. Go's scan is
+# strict and rejects. Repair direction is Go's, and it is a real question
+# rather than a sweep: `"\u12g4"` is invalid TOML, so the port that
+# rejects it is the one a reader would call right.
+#
+# A SECOND escape belongs in this class and cannot be written down here.
+# `a = "\ud801"` is a lone surrogate: a JavaScript string keeps it, and a
+# Rust `char` and a Go rune are Unicode SCALAR values, so both fold it to
+# U+FFFD. The cell vocabulary is JSON, and the JSON decoders in two of the
+# three halves fold a lone surrogate to U+FFFD while reading the `ts` cell
+# itself, so all three cells compare equal and the row asserts nothing.
+# That difference is permanent, comes from the engine and is recorded in
+# parser/DIVERGENCE.md and in rs/README.md.
+#
+# MEASURED 2026-09-22 in all three ports.
+a = "\\u12g4"	{"a":"\u0012"}	ERROR:invalid_unicode@1:5	{"a":"\u0012"}	lax hexadecimal scan: repair direction is the Go port

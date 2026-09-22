@@ -162,7 +162,15 @@ has no way to say what JavaScript says:
   which is what Node hands the TypeScript suite.
 - **Lone surrogates fold to U+FFFD**, and the regular expression dialect
   is the `regex` crate's. Both come from the engine, and both are
-  recorded there.
+  recorded there. A lone surrogate is the one difference the register
+  cannot carry: its cells are JSON, and the JSON decoders that read them
+  fold a lone surrogate to U+FFFD as well, so every cell would compare
+  equal. Go answers U+FFFD here too.
+- **A lax hexadecimal escape follows TypeScript.** `"\u12g4"` reads as
+  U+0012 in TypeScript and here, because the canonical scan accepts every
+  ASCII letter and then takes the longest hexadecimal prefix. Go rejects
+  it. The row in [`../test/divergent.tsv`](../test/divergent.tsv) records
+  the three answers and puts the repair on the Go side.
 - **A bad token reached in lookahead reports `unexpected`.** When an
   alternate needs two tokens and the second is the lexer's bad token, the
   other two ports raise that token's own code, such as

@@ -80,6 +80,21 @@ until it lands. Six documents of the BurntSushi corpus sit in this class,
 all of them rejected by every port, which is why the `rust` row of
 `conformance.tsv` still reproduces the `ts` counts.
 
+One more row records a **lax hexadecimal escape**: `a = "\\u12g4"` reads
+as U+0012 in TypeScript and Rust, because the canonical scan accepts every
+ASCII letter and then takes the longest hexadecimal prefix, and Go rejects
+it with `invalid_unicode`. The repair direction is Go's, and it is a real
+question rather than a sweep, because `"\u12g4"` is invalid TOML.
+
+One difference that belongs in the register cannot be written into it. A
+lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds
+to U+FFFD in Go and Rust, whose characters are Unicode scalar values. The
+cells are JSON, and the JSON decoders in two of the three halves fold a
+lone surrogate while reading the `ts` cell itself, so all three cells
+compare equal and the row asserts nothing. It stays in prose, in
+`parser/DIVERGENCE.md` and `rs/README.md`, until the cell vocabulary can
+carry it.
+
 Every half of the register compares its own cell against **every** other
 runtime column. Reading one other column made a row that only `rust`
 disagrees on read as vacuous, so the class above could not be written down.
