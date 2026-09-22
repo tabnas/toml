@@ -40,9 +40,9 @@ Separate from `spec/`, and read by `ts/test/divergent.test.ts`,
 `go/divergent_test.go` and `rs/tests/divergent_test.rs` rather than by the
 shared runner.
 
-It records the places the two ports **disagree**, with a column per port,
+It records the places the ports **disagree**, with a column per port,
 and it is **not a fixture**. A fixture fails when behaviour regresses. This
-fails **both ways**: when a port is repaired to agree with the other, the
+fails **both ways**: when a port is repaired to agree with the others, the
 row still claims they differ, so the suite goes red and names the row to
 delete. A divergence recorded as a passing test of current behaviour
 survives its own repair, with nothing red — which is how the 2026-08 fleet
@@ -57,7 +57,9 @@ audit found 29 recorded claims contradicted by execution.
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
 position; one that has it is compared on both.
 
-The current two rows are the **astral column unit**, and they are
+The register holds two classes of row today.
+
+The first two rows are the **astral column unit**, and they are
 *permanent*: TypeScript counts UTF-16 code units, so an astral character
 advances the column by two, and Go counts runes, so it advances by one.
 Rust counts Unicode scalar values, the same unit as a Go rune, so the
@@ -66,11 +68,46 @@ here and three ports. Forced by the scan unit and recorded in
 `parser/DIVERGENCE.md`. Do not delete them on a sweep — nothing is going to
 close them.
 
-They started as four rows of **audit P5**, Go advancing the error column in
-*bytes*. That defect is repaired (#51), so the two BMP rows went; the two
-astral rows moved with it and only the byte half of their gap closed, so
-they were re-attributed rather than deleted. A row whose number changes is
-not automatically a row that has served its purpose.
+The last three rows are a **bad token reached in lookahead**, and they are
+open. When an alternate needs two tokens and the second is the lexer's bad
+token, TypeScript and Go raise that token's own code (`unterminated_string`,
+`unprintable`) and Rust answers `unexpected` at the first token. The Rust
+engine builds its "no alternate matched" error from the first lookahead
+token alone, so a bad token in a later slot loses its code; the canonical
+engine remembers it and throws it once every alternate has declined. The
+repair is an engine one, in `tabnas/parser`'s Rust port, so the rows stay
+until it lands. Six documents of the BurntSushi corpus sit in this class,
+all of them rejected by every port, which is why the `rust` row of
+`conformance.tsv` still reproduces the `ts` counts.
+
+One more row records a **lax hexadecimal escape**: `a = "\\u12g4"` reads
+as U+0012 in TypeScript and Rust, because the canonical scan accepts every
+ASCII letter and then takes the longest hexadecimal prefix, and Go rejects
+it with `invalid_unicode`. **Go's rejection is the repair TARGET**, which
+is what makes this a real question rather than a sweep: `"\u12g4"` is
+invalid TOML -- the format requires exactly four hexadecimal digits --
+so Go is the only one of the three that is right, and the two that move
+are TypeScript and Rust.
+
+One difference that belongs in the register cannot be written into it. A
+lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds
+to U+FFFD in Go and Rust, whose characters are Unicode scalar values. The
+cells are JSON, and the JSON decoders in two of the three halves fold a
+lone surrogate while reading the `ts` cell itself, so all three cells
+compare equal and the row asserts nothing. It stays in prose, in
+`parser/DIVERGENCE.md` and `rs/README.md`, until the cell vocabulary can
+carry it.
+
+Every half of the register compares its own cell against **every** other
+runtime column. Reading one other column made a row that only `rust`
+disagrees on read as vacuous, so the class above could not be written down.
+
+The astral rows started as four rows of **audit P5**, Go advancing the
+error column in *bytes*. That defect is repaired (#51), so the two BMP
+rows went; the two astral rows moved with it and only the byte half of
+their gap closed, so they were re-attributed rather than deleted. A row
+whose number changes is not automatically a row that has served its
+purpose.
 
 **Measure against the sibling checkouts.** The shared `polyglot-ci`
 workflow clones each `tabnas` dependency and wires a `go work use` / npm

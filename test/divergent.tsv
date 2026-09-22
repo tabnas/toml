@@ -1,5 +1,6 @@
 input	ts	go	rust	why
-# divergent.tsv — where this repo's two ports DISAGREE, executed by both.
+# divergent.tsv — where this repo's three ports DISAGREE, executed by all
+# three.
 #
 #   input  TOML source. Escapes \n \r \t \\ are decoded, as in spec/.
 #   ts,go,rust
@@ -8,7 +9,7 @@ input	ts	go	rust	why
 #   why    the audit item, and where the repair lives.
 #
 # NOT A FIXTURE. A fixture fails when behaviour REGRESSES. This fails BOTH
-# ways: when a port is repaired to agree with the other, the row still
+# ways: when a port is repaired to agree with another, the row still
 # claims they differ, so the suite goes red and names the row to delete. A
 # divergence recorded as a passing test of current behaviour survives its
 # own repair, with nothing red — which is how the 2026-08 audit found 29
@@ -52,3 +53,55 @@ input	ts	go	rust	why
 # published pin gives different numbers and is not what the gate will see.
 ["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
 ["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent
+#
+# --- A bad token reached in LOOKAHEAD: the code the reader is given ------
+# When an alternate needs two tokens and the SECOND one is the lexer's bad
+# token, TypeScript and Go raise that token's own diagnosis
+# (unterminated_string, unprintable), and Rust answers `unexpected` at the
+# first token instead. The Rust engine builds the "no alternate matched"
+# error from the first lookahead token alone
+# (tabnas/parser rs/src/parser.rs, `deferred_error_code(t0)`), so a bad
+# token in any later slot loses its code; the canonical engine remembers it
+# and throws it once every alternate has declined
+# (tabnas/parser ts/src/rules.ts, the deferred bad-token throw).
+#
+# Both other ports agree on the code AND the position, so these rows pin
+# both. The repair is an ENGINE repair in tabnas/parser's Rust port, not a
+# grammar one: this plugin sees the token after the engine has chosen what
+# to report. Six documents of the BurntSushi corpus land here, which is why
+# the `rust` row of ../test/conformance.tsv still reproduces the `ts` counts:
+# all six are rejected by every port, and only the code differs.
+#
+# The first row is a quoted table-header key that never closes, the second a
+# raw newline inside one, and the third a value context: a run of
+# apostrophes long enough that the leftovers of one string re-lex into
+# another, whose failure only the lookahead sees.
+#
+# MEASURED 2026-09-22 in all three ports, against the sibling checkouts and
+# again against the published Go modules, which agree.
+["abc	ERROR:unterminated_string@1:2	ERROR:unterminated_string@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
+["tbl\n"]	ERROR:unprintable@1:2	ERROR:unprintable@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
+a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unexpected@1:22	bad token in lookahead: engine repair in tabnas/parser rs
+#
+# --- A string escape where the three ports are not unanimous -------------
+# `\u12g4` is a lax hexadecimal scan. The canonical `isHexadecimal`
+# accepts every ASCII letter and `parseInt` then reads the longest hex
+# PREFIX, so TypeScript answers U+0012 and swallows the rest; the Rust port
+# reproduces it deliberately, since TypeScript is canonical. Go's scan is
+# strict and rejects. GO IS THE REPAIR TARGET, not the defect: `"\u12g4"`
+# is invalid TOML -- the format requires exactly four hexadecimal digits --
+# so the port that rejects it is the one a reader would call right, and the
+# two that move are TypeScript and Rust. That is what makes this a real
+# question rather than a sweep.
+#
+# A SECOND escape belongs in this class and cannot be written down here.
+# `a = "\ud801"` is a lone surrogate: a JavaScript string keeps it, and a
+# Rust `char` and a Go rune are Unicode SCALAR values, so both fold it to
+# U+FFFD. The cell vocabulary is JSON, and the JSON decoders in two of the
+# three halves fold a lone surrogate to U+FFFD while reading the `ts` cell
+# itself, so all three cells compare equal and the row asserts nothing.
+# That difference is permanent, comes from the engine and is recorded in
+# parser/DIVERGENCE.md and in rs/README.md.
+#
+# MEASURED 2026-09-22 in all three ports.
+a = "\\u12g4"	{"a":"\u0012"}	ERROR:invalid_unicode@1:5	{"a":"\u0012"}	lax hexadecimal scan: Go is right, TS and Rust move

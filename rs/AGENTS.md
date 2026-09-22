@@ -17,7 +17,7 @@ only covers what is specific to this crate.
 | `src/daterange.rs` | whether a date or time whose SHAPE matched denotes a real instant |
 | `src/values.rs` | `TomlTime`, and how it rides on a `tabnas::Value` |
 | `tests/parity_test.rs` | every `../test/spec/*.tsv` fixture, discovered by listing |
-| `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns, key conflicts, the embedded grammar, threads |
+| `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns, key conflicts, the canonical message templates, the embedded grammar, threads |
 | `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
 | `tests/perf_test.rs` | `parse` reuses its instance |
@@ -136,7 +136,10 @@ adjustments. Each is in `lib.rs` next to its reason; the short version:
    BOM and date matchers are added here rather than to the shared grammar
    text, because that text is read by two ports that install their own.
 5. **`adjust_messages`.** The `error` and `hint` templates, kept in step
-   with the TypeScript registration word for word.
+   with the TypeScript registration word for word, which
+   `the_error_templates_are_the_canonical_ones` in `tests/toml_test.rs`
+   measures: it reads the installed options off a live instance and looks
+   for each template in `../ts/src/toml.ts`.
 
 `register_special_floats` runs AFTER the document, because a keyword
 value definition takes a literal `val` and never a function reference, so
@@ -222,20 +225,61 @@ as `parseInt` does. Narrowing it to real hex digits would change which
 documents parse: `"\u12g4"` is U+0012 in TypeScript and here, and
 `invalid_unicode` in Go. That is a TypeScript/Go disagreement this port
 did not create and does not adjudicate; it reproduces TypeScript, which
-is the rule. It is not in `../test/divergent.tsv` because measuring the
-two cells there means running those two ports, and nothing here can.
+is the rule. It is a row of `../test/divergent.tsv` now, measured in all
+three ports.
+
+**Go's behaviour is the repair target, not the defect.** TOML requires
+exactly four hexadecimal digits after `\u`, so `"\u12g4"` is not a TOML
+document, and Go is the only one of the three that says so. Under ADR-13
+this is the case where the TypeScript implementation is itself defective
+and TypeScript moves; this port follows it there. Reading the row as
+"repair Go" would send somebody to change the one conforming port.
 
 ## The divergence register has a local runner
 
 `tests/divergent_test.rs` carries its own comparator rather than using
 `tabnas_support::Register`, and so do the other two halves. That library
-compares two cells by error CODE and drops the `@row:col` suffix; every
-row of this register is a positional disagreement on the same code, so it
-reads every row as "records no divergence" and the file asserts nothing.
+compares two cells by error CODE and drops the `@row:col` suffix; the
+astral rows of this register are positional disagreements on one code, so
+it reads them as "records no divergence" and they assert nothing.
 `same_expectation_reads_the_position` pins the comparator, because a
 comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,
 delete the local comparator in all three halves together.
+
+## The open divergence is an ENGINE repair, not a grammar one
+
+Three rows of `../test/divergent.tsv` carry the `rust` column away from
+the other two ports, and nothing in this crate can close them.
+
+When an alternate needs two tokens and the SECOND one is the lexer's bad
+token, TypeScript and Go raise that token's own diagnosis and this port
+answers `unexpected` at the first token:
+
+| input | ts, go | rust |
+|---|---|---|
+| `["abc` | `unterminated_string@1:2` | `unexpected@1:1` |
+| `["tbl<newline>"]` | `unprintable@1:2` | `unexpected@1:1` |
+| `a = '''x''''''''''''''` | `unterminated_string@1:18` | `unexpected@1:22` |
+
+The string matcher is not the cause: instrumented, it cuts exactly the
+same tokens in all three ports, including the second `#ST` the third row
+re-lexes out of the leftover apostrophes. The engine is. In
+`tabnas/parser` `rs/src/parser.rs`, `slot_matches` rejects `TIN_BD` at
+every position and records nothing, and the "no alternate matched" error
+is then built from `context.t.first()` through `deferred_error_code`, so
+a bad token at any slot past the first loses its code. The canonical
+engine keeps the bad token it met while scanning the slots and throws its
+`why` once every alternate has declined (`ts/src/rules.ts`, the deferred
+bad-token throw), which is why Go, reading the same lookahead, agrees
+with TypeScript.
+
+The repair belongs in the engine: remember the first `TIN_BD` token seen
+while matching alternates, and raise its code and position instead of
+`unexpected` on the first token when no alternate matches. Six documents
+of the BurntSushi corpus are in this class; all six are rejected either
+way, so the `rust` row of `../test/conformance.tsv` is unaffected and the
+register is the only thing holding the difference.
 
 ## The conformance suite never skips
 

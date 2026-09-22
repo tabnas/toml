@@ -18,13 +18,15 @@ engine's lexer, comment handling, and value matchers. The grammar sets
 and date/time value matchers on top of the jsonic core.
 
 There are three implementations that must behave identically —
-TypeScript (canonical), a Go port and a Rust port. The Go port reimplements the same features
-natively (its own string matcher, context-aware date/time matchers,
-NaN/Infinity defaults, dotted keys, tables and arrays-of-tables) and
-passes the **full** shared `.tsv` fixture set. Both runners assert the exact
-error **code** on an `ERROR:<code>` row. One input is still rejected with
-different codes by the two ports; it is allowed by name and guarded so the
-allowance cannot outlive the divergence (see below).
+TypeScript (canonical), a Go port and a Rust port. Each port reimplements
+the same features natively (its own string matcher, context-aware
+date/time matchers, NaN/Infinity defaults, dotted keys, tables and
+arrays-of-tables) and passes the **full** shared `.tsv` fixture set. All
+three runners assert the exact error **code** on an `ERROR:<code>` row,
+and there are **no** allowances (see below). Where a port still answers a
+different code, the input is a row of `test/divergent.tsv` with a cell per
+runtime, executed by all three suites, so the record cannot outlive the
+divergence.
 
 ## Repository map
 
@@ -41,7 +43,7 @@ allowance cannot outlive the divergence (see below).
 
 ## The tabnas engine dependency
 
-Both runtimes depend on the unpublished `@tabnas` siblings via a
+All three runtimes depend on the unpublished `@tabnas` siblings via a
 **sibling checkout** (the standard tabnas dev model until the packages
 publish tagged releases):
 
@@ -79,29 +81,31 @@ below).
 
 ## Authority and alignment rules
 
-**TypeScript is canonical. Go is a port of it.** When you change
+**TypeScript is canonical. Go and Rust are ports of it.** When you change
 behaviour:
 
 1. Change `ts/src/toml.ts` first (or `toml-grammar.jsonic` for grammar
    changes — see the embed section below).
-2. Port the same change to the Go files. The Go port covers the same
-   feature surface as TS via native equivalents (string matcher, date/time
-   matchers, special floats). Resolve any new grammar `@`-ref in
-   `go/refs.go` `makeRefs()` (or have `stripUnsupported` remove the hook
-   if Go reimplements it natively, as it does for the string matcher).
+2. Port the same change to the Go files and to `rs/src`. Both ports cover
+   the same feature surface as TS via native equivalents (string matcher,
+   date/time matchers, special floats). Resolve any new grammar `@`-ref in
+   `go/refs.go` `makeRefs()` and `rs/src/refs.rs` (or have
+   `stripUnsupported` remove the hook if Go reimplements it natively, as it
+   does for the string matcher).
 3. Add/extend the shared fixture(s) in `test/spec/*.tsv` so every runtime
-   asserts the new behaviour. The fixtures are the parity contract; both
-   suites resolve them at `../test/spec` (TS:
-   `ts/test/toml-tsv.test.ts` `loadTSV`; Go: `go/toml_tsv_test.go`
-   `loadTSV`).
-4. Run both suites and confirm green.
+   asserts the new behaviour. The fixtures are the parity contract; all
+   three suites resolve them at `../test/spec` (TS:
+   `ts/test/toml-tsv.test.ts`; Go: `go/toml_tsv_test.go` `TestSpec`; Rust:
+   `rs/tests/parity_test.rs`).
+4. Run all three suites and confirm green.
 
 The `.tsv` fixtures use `input → expected` JSON, with error cases written
-as `ERROR:<code>`. **Both** runners assert the exact code — TS via
-`err.code`, Go via the shared `support.Runner`'s `MatchError`. An
-`ERROR:<code>` row is therefore a cross-runtime contract, not a TS-side one.
+as `ERROR:<code>`. **All three** runners assert the exact code — TS via
+`err.code`, Go via the shared `support.Runner`'s `MatchError`, Rust via
+the same shared runner's default comparison. An `ERROR:<code>` row is
+therefore a cross-runtime contract, not a TS-side one.
 
-There are **no** allowances: `MatchError` compares the code and nothing else.
+There are **no** allowances: the comparison is the code and nothing else.
 
 There used to be one, and how it was written down is worth keeping. A
 `divergentCode` map excused `"unterminated` — `unexpected` in TypeScript,
@@ -284,10 +288,10 @@ neither had ever executed on CI. **Do not reintroduce a skip here.**
 
 Valid: TS (`toml-valid`) asserts the collected failure list is empty and
 that at least 200 fixtures actually ran, so a broken clone cannot pass by
-running nothing; Go (`TestTomlValid`) reports each failure with
-`t.Errorf`.
+running nothing; Rust (`toml_valid`) asserts the same two things; Go
+(`TestTomlValid`) reports each failure with `t.Errorf`.
 
-Invalid (`toml-invalid` / `TestTomlInvalid`): this is a permissive
+Invalid (`toml-invalid` / `TestTomlInvalid` / `toml_invalid`): this is a permissive
 grammar layered on relaxed-JSON jsonic, so it accepts many documents TOML
 rejects, and 100% is not reachable today. The counts are instead pinned at
 what was **measured**, in **one file every runtime reads**:
@@ -301,19 +305,20 @@ corpus is pinned by commit, so the counts are deterministic and exactness
 is the honest assertion. Movement in **either** direction fails:
 
 - **Down** — something regressed. Do not edit the file to make it pass.
-- **Up** — the grammar improved. Re-measure **both** runtimes and update
+- **Up** — the grammar improved. Re-measure **every** runtime and update
   that one file.
 
-The two runtimes have their own rows and their numbers legitimately
-differ; the reason for the gap is written in that file's header, next to
-the numbers it explains. Before, they were four constants in two languages
+Each runtime has its own row and their numbers legitimately differ; the
+reason for the gap is written in that file's header, next to the numbers
+it explains. Before, they were four constants in two languages
 in two files, all commented "MEASURED on 2026-08-09" against the same
 corpus, with nothing comparing them.
 
 Rejections are counted two ways, and the two cannot be traded for each
 other: a **diagnosed** rejection is a real parse error (a `.code`-bearing
-Tabnas/jsonic error in TS, a returned `error` in Go); anything else is an
-internal crash (a `TypeError` in TS, a recovered panic in Go). A crash is
+Tabnas/jsonic error in TS, a returned `error` in Go, an `Err` carrying a
+code in Rust); anything else is an internal crash (a `TypeError` in TS, a
+recovered panic in Go or Rust). A crash is
 still a rejection but it is not a *conformant* one, so both are counted
 separately and `test/conformance.tsv` carries a `crashes` column as well.
 Fixing a crash into a diagnosis raises the diagnosed number; turning a
@@ -471,9 +476,14 @@ accepts the publish. Pushing a tag by hand is the orchestrator's path
 
 The steps, in order:
 
-1. Bump all **three** version sites together — `ts/package.json`, `VERSION`
-   in `ts/src/toml.ts` and `const VERSION` in `go/toml.go`. Drift is caught
-   by `ts/test/version.test.ts` and `go/version_test.go`.
+1. Bump all **five** version sites together — `ts/package.json`, `VERSION`
+   in `ts/src/toml.ts`, `const VERSION` in `go/toml.go`, `version` in
+   `rs/Cargo.toml` and `pub const VERSION` in `rs/src/lib.rs`. Drift is
+   caught by `ts/test/version.test.ts`, `go/version_test.go` and
+   `rs/tests/version_test.rs`. Then regenerate `rs/Cargo.lock`
+   (`cd rs && cargo update --workspace`): `ci/rust/run.sh` reads the
+   crate's own entry there and fails on a stale one, and no GitHub
+   workflow runs that gate, so nothing else catches it.
 2. Verify against the **published** dependencies rather than your checkout.
    The release runner installs fresh from the registry; a working tree
    usually does not, so reproduce that before believing anything:
