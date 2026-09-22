@@ -2,10 +2,11 @@
 
 package tabnastoml
 
-// divergent_test.go — the divergence register: where this repo's two ports
+// divergent_test.go — the divergence register: where this repo's ports
 // DISAGREE, executed.
 //
-// ts/test/divergent.test.ts runs the SAME file and reads the other column.
+// ts/test/divergent.test.ts and rs/tests/divergent_test.rs run the SAME
+// file and read their own columns.
 //
 // WHY THIS IS NOT A FIXTURE. A fixture fails when behaviour REGRESSES. This
 // fails BOTH ways: when a port is repaired to agree with the other, the row
@@ -34,11 +35,16 @@ import (
 	support "github.com/tabnas/support/go"
 )
 
-// This runtime's column. The TypeScript half reads `ts`.
-const (
-	registerRuntime = "go"
-	registerOther   = "ts"
-)
+// registerRuntime is this runtime's column. The TypeScript half reads
+// `ts` and the Rust half `rust`.
+const registerRuntime = "go"
+
+// registerOthers is EVERY other runtime column, not one of them. A
+// register with a column per runtime can record a divergence between any
+// pair, so a row where only `rust` differs is a divergence this half must
+// accept rather than reject as vacuous. Reading a single other column made
+// such a row impossible to write.
+var registerOthers = []string{"ts", "rust"}
 
 // outcome is what this port did with one input, in the register's own
 // vocabulary.
@@ -147,17 +153,28 @@ func TestDivergenceRegister(t *testing.T) {
 	for _, row := range spec.Rows {
 		input := row.UnescNamed("input")
 		mine := row.Named(registerRuntime)
-		theirs := row.Named(registerOther)
+		others := make(map[string]string, len(registerOthers))
+		for _, name := range registerOthers {
+			others[name] = row.Named(name)
+		}
 
 		t.Run(fmt.Sprintf("row %d: %q", row.Line, input), func(t *testing.T) {
-			// 1. Does this row record a divergence at all? Two columns
-			//    saying the same thing assert nothing and would pass
+			// 1. Does this row record a divergence at all? Columns that
+			//    all say the same thing assert nothing and would pass
 			//    forever, which is the shape of the prose claims this
 			//    replaces.
-			if sameExpectation(mine, theirs) {
-				t.Fatalf("%s: both columns mean %q, so this row records no "+
-					"divergence and can never fail meaningfully. Delete it, "+
-					"or correct the cells to what the ports actually do.",
+			vacuous := true
+			for _, cell := range others {
+				if !sameExpectation(mine, cell) {
+					vacuous = false
+					break
+				}
+			}
+			if vacuous {
+				t.Fatalf("%s: every runtime column means %q, so this row "+
+					"records no divergence and can never fail meaningfully. "+
+					"Delete it, or correct the cells to what the ports "+
+					"actually do.",
 					row.Where(), mine)
 			}
 
@@ -167,26 +184,32 @@ func TestDivergenceRegister(t *testing.T) {
 				return
 			}
 
-			// 2. It changed. Did it change INTO the other port's answer?
+			// 2. It changed. Did it change INTO another port's answer?
 			//    Then the divergence is closed, and reporting a regression
 			//    would send the reader to exactly the wrong conclusion.
-			if sameExpectation(got, theirs) {
-				t.Fatalf("%s: this divergence is CLOSED. %s now produces "+
-					"what the %s column records (%s), not its own (%s).\n"+
+			converged := make([]string, 0, len(registerOthers))
+			for _, name := range registerOthers {
+				if sameExpectation(got, others[name]) {
+					converged = append(converged, name)
+				}
+			}
+			if 0 < len(converged) {
+				t.Fatalf("%s: this divergence is CLOSED against %s. %s now "+
+					"produces %s, not its own %s.\n"+
 					"  A fixed divergence fails as loudly as a regressed "+
 					"one, so the row cannot outlive it.\n"+
-					"  DELETE this row — and if the repair landed in the "+
-					"engine, check whether the other rows citing %s go with "+
-					"it.",
-					row.Where(), registerRuntime, registerOther, theirs, mine,
+					"  Update or DELETE this row, and if the repair landed "+
+					"in the engine, check the other rows citing %s.",
+					row.Where(), strings.Join(converged, ", "),
+					registerRuntime, got, mine,
 					strings.TrimSpace(row.Named("why")))
 			}
 
 			// 3. Neither. An ordinary regression.
-			t.Fatalf("%s: %s changed, and not into the %s answer either — "+
-				"this is a regression, not a closed divergence.\n"+
+			t.Fatalf("%s: %s changed, and not into another port's answer "+
+				"either, so this is a regression, not a closed divergence.\n"+
 				"  got:      %s\n  expected: %s",
-				row.Where(), registerRuntime, registerOther, got, mine)
+				row.Where(), registerRuntime, got, mine)
 		})
 	}
 }

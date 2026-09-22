@@ -33,9 +33,14 @@ import { Toml } from '..'
 
 const REGISTER = Path.join(findSpecDir(__dirname), '..', 'divergent.tsv')
 
-// This runtime's column. The Go half reads `go`.
+// This runtime's column. The Go half reads `go` and the Rust half `rust`.
 const RUNTIME = 'ts'
-const OTHER = 'go'
+// EVERY other runtime column, not one of them. A register with a column
+// per runtime can record a divergence between any pair, so a row where
+// only `rust` differs is a divergence this half must accept rather than
+// reject as vacuous. Reading a single other column made such a row
+// impossible to write.
+const OTHERS = ['go', 'rust']
 
 
 // What one port did with one input, in the register's own vocabulary.
@@ -124,16 +129,17 @@ describe('divergence-register', () => {
   for (const row of spec.rows) {
     const input = row.unesc(row.resolve('input'))
     const mine = row.col(row.resolve(RUNTIME))
-    const theirs = row.col(row.resolve(OTHER))
+    const others: [string, string][] =
+      OTHERS.map((name) => [name, row.col(row.resolve(name))])
 
     test(`row ${row.line}: ${JSON.stringify(input)}`, () => {
-      // 1. Does this row record a divergence at all? Two columns saying
+      // 1. Does this row record a divergence at all? Columns that all say
       //    the same thing assert nothing and would pass forever, which is
       //    the shape of the prose claims this replaces.
-      ok(!same(mine, theirs),
-        `${row.where()}: both columns mean ${JSON.stringify(mine)}, so this ` +
-        'row records no divergence and can never fail meaningfully. Delete ' +
-        'it, or correct the cells to what the ports actually do.')
+      ok(!others.every(([, cell]) => same(cell, mine)),
+        `${row.where()}: every runtime column means ${JSON.stringify(mine)}, ` +
+        'so this row records no divergence and can never fail meaningfully. ' +
+        'Delete it, or correct the cells to what the ports actually do.')
 
       const got = outcome(input)
 
@@ -141,23 +147,26 @@ describe('divergence-register', () => {
         return
       }
 
-      // 2. It changed. Did it change INTO the other port's answer? Then
-      //    the divergence is closed, and reporting a regression would send
-      //    the reader to exactly the wrong conclusion.
-      if (same(got, theirs)) {
+      // 2. It changed. Did it change INTO another port's answer? Then the
+      //    divergence is closed, and reporting a regression would send the
+      //    reader to exactly the wrong conclusion.
+      const converged = others
+        .filter(([, cell]) => same(got, cell))
+        .map(([name]) => name)
+      if (0 < converged.length) {
         ok(false,
-          `${row.where()}: this divergence is CLOSED. ${RUNTIME} now ` +
-          `produces what the ${OTHER} column records (${theirs}), not its ` +
-          `own (${mine}).\n  A fixed divergence fails as loudly as a ` +
-          'regressed one, so the row cannot outlive it.\n  DELETE this row ' +
-          '— and if the repair landed in the engine, check whether the ' +
-          `other rows citing ${row.col(row.resolve('why'))} go with it.`)
+          `${row.where()}: this divergence is CLOSED against ` +
+          `${converged.join(', ')}. ${RUNTIME} now produces ${got}, not its ` +
+          `own ${mine}.\n  A fixed divergence fails as loudly as a ` +
+          'regressed one, so the row cannot outlive it.\n  Update or DELETE ' +
+          'this row, and if the repair landed in the engine, check the ' +
+          `other rows citing ${row.col(row.resolve('why'))}.`)
       }
 
       // 3. Neither. An ordinary regression.
       equal(got, mine,
-        `${row.where()}: ${RUNTIME} changed, and not into the ${OTHER} ` +
-        'answer either — this is a regression, not a closed divergence.')
+        `${row.where()}: ${RUNTIME} changed, and not into another port's ` +
+        'answer either, so this is a regression, not a closed divergence.')
     })
   }
 })
