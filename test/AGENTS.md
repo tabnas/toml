@@ -83,8 +83,11 @@ all of them rejected by every port, which is why the `rust` row of
 One more row records a **lax hexadecimal escape**: `a = "\\u12g4"` reads
 as U+0012 in TypeScript and Rust, because the canonical scan accepts every
 ASCII letter and then takes the longest hexadecimal prefix, and Go rejects
-it with `invalid_unicode`. The repair direction is Go's, and it is a real
-question rather than a sweep, because `"\u12g4"` is invalid TOML.
+it with `invalid_unicode`. **Go's rejection is the repair TARGET**, which
+is what makes this a real question rather than a sweep: `"\u12g4"` is
+invalid TOML -- the format requires exactly four hexadecimal digits --
+so Go is the only one of the three that is right, and the two that move
+are TypeScript and Rust.
 
 One difference that belongs in the register cannot be written into it. A
 lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds

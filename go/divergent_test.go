@@ -163,11 +163,27 @@ func TestDivergenceRegister(t *testing.T) {
 			//    all say the same thing assert nothing and would pass
 			//    forever, which is the shape of the prose claims this
 			//    replaces.
+			//
+			//    Judged over EVERY PAIR of cells, not each other cell
+			//    against this runtime's. A cell that pins no position is
+			//    satisfied by any position, so it is a wildcard: with ts
+			//    `ERROR:x`, go `ERROR:x@1:1` and rust `ERROR:x@1:2`, the
+			//    old comparison answered "vacuous" in the TypeScript half
+			//    and "not vacuous" here, for one row. The three suites
+			//    have to agree about whether a row records anything, and
+			//    a real disagreement between two OTHER runtimes is one.
+			cells := make([]string, 0, len(others)+1)
+			cells = append(cells, mine)
+			for _, name := range registerOthers {
+				cells = append(cells, others[name])
+			}
 			vacuous := true
-			for _, cell := range others {
-				if !sameExpectation(mine, cell) {
-					vacuous = false
-					break
+			for i := 0; i < len(cells) && vacuous; i++ {
+				for j := i + 1; j < len(cells); j++ {
+					if !sameExpectation(cells[i], cells[j]) {
+						vacuous = false
+						break
+					}
 				}
 			}
 			if vacuous {

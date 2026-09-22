@@ -226,7 +226,14 @@ documents parse: `"\u12g4"` is U+0012 in TypeScript and here, and
 `invalid_unicode` in Go. That is a TypeScript/Go disagreement this port
 did not create and does not adjudicate; it reproduces TypeScript, which
 is the rule. It is a row of `../test/divergent.tsv` now, measured in all
-three ports, with the repair direction recorded as Go's.
+three ports.
+
+**Go's behaviour is the repair target, not the defect.** TOML requires
+exactly four hexadecimal digits after `\u`, so `"\u12g4"` is not a TOML
+document, and Go is the only one of the three that says so. Under ADR-13
+this is the case where the TypeScript implementation is itself defective
+and TypeScript moves; this port follows it there. Reading the row as
+"repair Go" would send somebody to change the one conforming port.
 
 ## The divergence register has a local runner
 

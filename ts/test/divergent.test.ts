@@ -137,7 +137,19 @@ describe('divergence-register', () => {
       // 1. Does this row record a divergence at all? Columns that all say
       //    the same thing assert nothing and would pass forever, which is
       //    the shape of the prose claims this replaces.
-      ok(!others.every(([, cell]) => same(cell, mine)),
+      //
+      //    Judged over EVERY PAIR of cells, not each other cell against
+      //    this runtime's. A cell that pins no position is satisfied by
+      //    any position, so it is a wildcard: with ts `ERROR:x`, go
+      //    `ERROR:x@1:1` and rust `ERROR:x@1:2`, comparing the others
+      //    against `mine` answered "vacuous" here and "not vacuous" in
+      //    Go and in Rust, for one row. The three suites have to agree
+      //    about whether a row records anything, and a real disagreement
+      //    between two OTHER runtimes is one.
+      const cells: [string, string][] = [[RUNTIME, mine], ...others]
+      const vacuous = cells.every(([, a], i) =>
+        cells.slice(i + 1).every(([, b]) => same(a, b)))
+      ok(!vacuous,
         `${row.where()}: every runtime column means ${JSON.stringify(mine)}, ` +
         'so this row records no divergence and can never fail meaningfully. ' +
         'Delete it, or correct the cells to what the ports actually do.')

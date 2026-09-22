@@ -347,16 +347,52 @@ fn key_conflicts_are_diagnosed() {
     }
 }
 
+/// The template that sits UNDER each code in the canonical `error` and
+/// `hint` tables, read out of `ts/src/toml.ts` by key rather than looked
+/// for anywhere in the file.
+///
+/// Searching the whole source was the defect: with two codes and two
+/// tables, swapping the two messages -- or giving one code the other's
+/// hint -- left every string still present somewhere in `toml.ts`, so the
+/// check passed while a reader got the wrong words for their diagnostic.
+/// A template compared against "is this text in the file" is barely a
+/// comparison at all.
+///
+/// The value may start on the key's line or the next, and is a
+/// single-quoted string or a backtick template; neither of the four
+/// contains its own delimiter.
+fn canonical_template(source: &str, table: &str, code: &str) -> String {
+    let opener = format!("{table}: {{");
+    let block_at = source
+        .find(&opener)
+        .unwrap_or_else(|| panic!("ts/src/toml.ts opens a `{table}` block"));
+    let block = &source[block_at + opener.len()..];
+    let key = format!("{code}:");
+    let key_at = block
+        .find(&key)
+        .unwrap_or_else(|| panic!("the `{table}` block declares no {code}"));
+    let after = &block[key_at + key.len()..];
+    let quote_at = after
+        .find(['\'', '`'])
+        .unwrap_or_else(|| panic!("the {table}.{code} value is not a literal"));
+    let quote = after.as_bytes()[quote_at] as char;
+    let body = &after[quote_at + 1..];
+    let end = body
+        .find(quote)
+        .unwrap_or_else(|| panic!("the {table}.{code} literal is not closed"));
+    body[..end].to_string()
+}
+
 /// The two toml-specific codes carry the CANONICAL message and hint, word
 /// for word, so a document rejected by two ports is rejected in the same
 /// words. `rs/AGENTS.md` and the templates in `lib.rs` both say so; this
 /// measures it, by reading the installed options off a live instance and
-/// looking for each template in the canonical source rather than in a copy
-/// of it.
+/// the canonical text out of the source UNDER THE SAME CODE.
 ///
-/// A reworded message on either side fails here, which is the point: the
-/// code is the contract across runtimes, and the wording is the contract
-/// with the reader.
+/// A reworded message on either side fails here, and so does a message
+/// filed under the wrong code, which is the point: the code is the
+/// contract across runtimes, and the wording is the contract with the
+/// reader.
 #[test]
 fn the_error_templates_are_the_canonical_ones() {
     let path = repo_dir().join("ts").join("src").join("toml.ts");
@@ -375,17 +411,28 @@ fn the_error_templates_are_the_canonical_ones() {
             .get(code)
             .unwrap_or_else(|| panic!("{code} has no hint template"));
 
-        assert!(
-            canonical.contains(message.as_str()),
-            "{code}: the message {message:?} is in no TypeScript literal in {}",
+        assert_eq!(
+            message.as_str(),
+            canonical_template(&canonical, "error", code),
+            "{code}: the message differs from the canonical one in {}",
             path.display()
         );
-        assert!(
-            canonical.contains(hint.as_str()),
-            "{code}: the hint is not the TypeScript one, word for word, in {}",
+        assert_eq!(
+            hint.as_str(),
+            canonical_template(&canonical, "hint", code),
+            "{code}: the hint differs from the canonical one in {}",
             path.display()
         );
     }
+
+    // The extraction reads by key, so the two codes must come back with
+    // DIFFERENT text; an extractor that returned the same string for both
+    // would make every assertion above agree with itself.
+    assert_ne!(
+        canonical_template(&canonical, "error", "toml_key_conflict"),
+        canonical_template(&canonical, "error", "invalid_datetime"),
+        "the extraction is not reading by key"
+    );
 }
 
 // --- the embedded grammar -----------------------------------------------

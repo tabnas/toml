@@ -170,7 +170,10 @@ has no way to say what JavaScript says:
   U+0012 in TypeScript and here, because the canonical scan accepts every
   ASCII letter and then takes the longest hexadecimal prefix. Go rejects
   it. The row in [`../test/divergent.tsv`](../test/divergent.tsv) records
-  the three answers and puts the repair on the Go side.
+  the three answers, and **Go's rejection is the repair target**: TOML
+  requires exactly four hexadecimal digits, so `"\u12g4"` is not a TOML
+  document and Go is the only one of the three that says so. The ports
+  that move are TypeScript and this one.
 - **A bad token reached in lookahead reports `unexpected`.** When an
   alternate needs two tokens and the second is a bad token from the
   lexer, the other two ports raise that token's own code, such as
