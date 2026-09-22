@@ -22,6 +22,7 @@
 //! not disturb it.
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -163,10 +164,12 @@ pub(crate) fn write(cell: &Rc<RefCell<Value>>, path: &[Seg], value: Value) {
         }
         (Value::Array(list), Seg::Index(index)) => {
             let list = Arc::make_mut(list);
-            if *index < list.len() {
-                list[*index] = value;
-            } else if *index == list.len() {
-                list.push(value);
+            match (*index).cmp(&list.len()) {
+                Ordering::Less => list[*index] = value,
+                Ordering::Equal => list.push(value),
+                // Past the end: the parent does not have the slot, and
+                // `write` creates only its final segment.
+                Ordering::Greater => {}
             }
         }
         _ => {}
