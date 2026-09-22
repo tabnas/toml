@@ -237,6 +237,40 @@ comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,
 delete the local comparator in all three halves together.
 
+## The open divergence is an ENGINE repair, not a grammar one
+
+Three rows of `../test/divergent.tsv` carry the `rust` column away from
+the other two ports, and nothing in this crate can close them.
+
+When an alternate needs two tokens and the SECOND one is the lexer's bad
+token, TypeScript and Go raise that token's own diagnosis and this port
+answers `unexpected` at the first token:
+
+| input | ts, go | rust |
+|---|---|---|
+| `["abc` | `unterminated_string@1:2` | `unexpected@1:1` |
+| `["tbl<newline>"]` | `unprintable@1:2` | `unexpected@1:1` |
+| `a = '''x''''''''''''''` | `unterminated_string@1:18` | `unexpected@1:22` |
+
+The string matcher is not the cause: instrumented, it cuts exactly the
+same tokens in all three ports, including the second `#ST` the third row
+re-lexes out of the leftover apostrophes. The engine is. In
+`tabnas/parser` `rs/src/parser.rs`, `slot_matches` rejects `TIN_BD` at
+every position and records nothing, and the "no alternate matched" error
+is then built from `context.t.first()` through `deferred_error_code`, so
+a bad token at any slot past the first loses its code. The canonical
+engine keeps the bad token it met while scanning the slots and throws its
+`why` once every alternate has declined (`ts/src/rules.ts`, the deferred
+bad-token throw), which is why Go, reading the same lookahead, agrees
+with TypeScript.
+
+The repair belongs in the engine: remember the first `TIN_BD` token seen
+while matching alternates, and raise its code and position instead of
+`unexpected` on the first token when no alternate matches. Six documents
+of the BurntSushi corpus are in this class; all six are rejected either
+way, so the `rust` row of `../test/conformance.tsv` is unaffected and the
+register is the only thing holding the difference.
+
 ## The conformance suite never skips
 
 `tests/toml_valid_test.rs` runs `../scripts/fetch-toml-test.sh` itself

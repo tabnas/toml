@@ -52,3 +52,32 @@ input	ts	go	rust	why
 # published pin gives different numbers and is not what the gate will see.
 ["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
 ["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent
+#
+# --- A bad token reached in LOOKAHEAD: the code the reader is given ------
+# When an alternate needs two tokens and the SECOND one is the lexer's bad
+# token, TypeScript and Go raise that token's own diagnosis
+# (unterminated_string, unprintable), and Rust answers `unexpected` at the
+# first token instead. The Rust engine builds the "no alternate matched"
+# error from the first lookahead token alone
+# (tabnas/parser rs/src/parser.rs, `deferred_error_code(t0)`), so a bad
+# token in any later slot loses its code; the canonical engine remembers it
+# and throws it once every alternate has declined
+# (tabnas/parser ts/src/rules.ts, the deferred bad-token throw).
+#
+# Both other ports agree on the code AND the position, so these rows pin
+# both. The repair is an ENGINE repair in tabnas/parser's Rust port, not a
+# grammar one: this plugin sees the token after the engine has chosen what
+# to report. Six documents of the BurntSushi corpus land here, which is why
+# the `rust` row of ../test/conformance.tsv still reproduces the `ts` counts:
+# all six are rejected by every port, and only the code differs.
+#
+# The first row is a quoted table-header key that never closes, the second a
+# raw newline inside one, and the third a value context: a run of
+# apostrophes long enough that the leftovers of one string re-lex into
+# another, whose failure only the lookahead sees.
+#
+# MEASURED 2026-09-22 in all three ports, against the sibling checkouts and
+# again against the published Go modules, which agree.
+["abc	ERROR:unterminated_string@1:2	ERROR:unterminated_string@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
+["tbl\n"]	ERROR:unprintable@1:2	ERROR:unprintable@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
+a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unexpected@1:22	bad token in lookahead: engine repair in tabnas/parser rs

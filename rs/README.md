@@ -163,6 +163,15 @@ has no way to say what JavaScript says:
 - **Lone surrogates fold to U+FFFD**, and the regular expression dialect
   is the `regex` crate's. Both come from the engine, and both are
   recorded there.
+- **A bad token reached in lookahead reports `unexpected`.** When an
+  alternate needs two tokens and the second is the lexer's bad token, the
+  other two ports raise that token's own code, such as
+  `unterminated_string` for `["abc`, and this port names the first token
+  instead. The engine builds its "no alternate matched" error from that
+  first token, so the diagnosis of a later one is lost. Six documents of
+  the conformance corpus land here, every one of them still rejected, and
+  the three rows in [`../test/divergent.tsv`](../test/divergent.tsv) pin
+  the difference until the engine repair lands.
 
 ## Build and test
 
