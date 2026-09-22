@@ -172,8 +172,8 @@ has no way to say what JavaScript says:
   it. The row in [`../test/divergent.tsv`](../test/divergent.tsv) records
   the three answers and puts the repair on the Go side.
 - **A bad token reached in lookahead reports `unexpected`.** When an
-  alternate needs two tokens and the second is the lexer's bad token, the
-  other two ports raise that token's own code, such as
+  alternate needs two tokens and the second is a bad token from the
+  lexer, the other two ports raise that token's own code, such as
   `unterminated_string` for `["abc`, and this port names the first token
   instead. The engine builds its "no alternate matched" error from that
   first token, so the diagnosis of a later one is lost. Six documents of
