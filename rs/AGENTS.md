@@ -17,7 +17,7 @@ only covers what is specific to this crate.
 | `src/daterange.rs` | whether a date or time whose SHAPE matched denotes a real instant |
 | `src/values.rs` | `TomlTime`, and how it rides on a `tabnas::Value` |
 | `tests/parity_test.rs` | every `../test/spec/*.tsv` fixture, discovered by listing |
-| `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns, key conflicts, the embedded grammar, threads |
+| `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns, key conflicts, the canonical message templates, the embedded grammar, threads |
 | `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
 | `tests/perf_test.rs` | `parse` reuses its instance |
@@ -136,7 +136,10 @@ adjustments. Each is in `lib.rs` next to its reason; the short version:
    BOM and date matchers are added here rather than to the shared grammar
    text, because that text is read by two ports that install their own.
 5. **`adjust_messages`.** The `error` and `hint` templates, kept in step
-   with the TypeScript registration word for word.
+   with the TypeScript registration word for word, which
+   `the_error_templates_are_the_canonical_ones` in `tests/toml_test.rs`
+   measures: it reads the installed options off a live instance and looks
+   for each template in `../ts/src/toml.ts`.
 
 `register_special_floats` runs AFTER the document, because a keyword
 value definition takes a literal `val` and never a function reference, so

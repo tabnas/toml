@@ -347,6 +347,47 @@ fn key_conflicts_are_diagnosed() {
     }
 }
 
+/// The two toml-specific codes carry the CANONICAL message and hint, word
+/// for word, so a document rejected by two ports is rejected in the same
+/// words. `rs/AGENTS.md` and the templates in `lib.rs` both say so; this
+/// measures it, by reading the installed options off a live instance and
+/// looking for each template in the canonical source rather than in a copy
+/// of it.
+///
+/// A reworded message on either side fails here, which is the point: the
+/// code is the contract across runtimes, and the wording is the contract
+/// with the reader.
+#[test]
+fn the_error_templates_are_the_canonical_ones() {
+    let path = repo_dir().join("ts").join("src").join("toml.ts");
+    let canonical = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+        .replace("\r\n", "\n");
+    let installed = make().config();
+
+    for code in ["toml_key_conflict", "invalid_datetime"] {
+        let message = installed
+            .error
+            .get(code)
+            .unwrap_or_else(|| panic!("{code} has no message template"));
+        let hint = installed
+            .hint
+            .get(code)
+            .unwrap_or_else(|| panic!("{code} has no hint template"));
+
+        assert!(
+            canonical.contains(message.as_str()),
+            "{code}: the message {message:?} is in no TypeScript literal in {}",
+            path.display()
+        );
+        assert!(
+            canonical.contains(hint.as_str()),
+            "{code}: the hint is not the TypeScript one, word for word, in {}",
+            path.display()
+        );
+    }
+}
+
 // --- the embedded grammar -----------------------------------------------
 
 /// The grammar is authored once, in `../toml-grammar.jsonic`, and
