@@ -389,7 +389,7 @@ TypeScript (from `ts/`):
 
 ```bash
 npm install            # auto-installs peers; resolves file: siblings
-npm run build          # embeds grammar, then tsc --build src test
+npm run build          # embeds grammar, then tsc --build src && tsc --build test
 npm test               # node --test over dist-test/*.test.js
 ```
 

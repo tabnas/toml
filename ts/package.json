@@ -28,7 +28,7 @@
     "test-some": "node --enable-source-maps --test-name-pattern=\"$npm_config_pattern\" --test \"dist-test/*.test.js\"",
     "watch": "tsc --build src test -w",
     "embed": "node embed-grammar.js",
-    "build": "node embed-grammar.js && tsc --build src test",
+    "build": "node embed-grammar.js && tsc --build src && tsc --build test",
     "clean": "rm -rf dist dist-test node_modules yarn.lock package-lock.json test/toml-test",
     "install-toml-test": "bash ../scripts/fetch-toml-test.sh",
     "reset": "npm run clean && npm i && npm run install-toml-test && npm run build && npm test",
