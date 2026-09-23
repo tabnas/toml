@@ -1,6 +1,6 @@
 {
   "name": "@tabnas/toml",
-  "version": "0.5.7",
+  "version": "0.5.8",
   "description": "This plugin allows the [Jsonic](https://github.com/tabnas/jsonic) JSON parser to support toml syntax.",
   "main": "dist/toml.js",
   "type": "commonjs",
@@ -28,7 +28,7 @@
     "test-some": "node --enable-source-maps --test-name-pattern=\"$npm_config_pattern\" --test \"dist-test/*.test.js\"",
     "watch": "tsc --build src test -w",
     "embed": "node embed-grammar.js",
-    "build": "node embed-grammar.js && tsc --build src test",
+    "build": "node embed-grammar.js && tsc --build src && tsc --build test",
     "clean": "rm -rf dist dist-test node_modules yarn.lock package-lock.json test/toml-test",
     "install-toml-test": "bash ../scripts/fetch-toml-test.sh",
     "reset": "npm run clean && npm i && npm run install-toml-test && npm run build && npm test",
@@ -52,8 +52,8 @@
     "@tabnas/parser": "*",
     "@tabnas/railroad": "*",
     "@tabnas/support": "*",
-    "@types/node": "25.6.0",
-    "typescript": "6.0.3"
+    "@types/node": "26.6.2",
+    "typescript": "7.0.2"
   },
   "peerDependencies": {
     "@tabnas/jsonic": ">=0",
