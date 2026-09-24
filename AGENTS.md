@@ -811,7 +811,7 @@ value as hostile text.
 `.github/workflows/ci.yml` is a thin caller: it delegates to the
 org-standard reusable workflow
 `tabnas/.github/.github/workflows/polyglot-ci.yml@main`, passing
-`deps: "parser debug json abnf railroad jsonic"` — the sibling tabnas
+`deps: "parser support debug json jsonic"` — the sibling tabnas
 repos this one is checked out next to and built against. The reusable
 workflow owns the matrix (Node/Go versions, OSes), the sibling clone +
 topo build, the `core.autocrlf false` setting (CRLF corrupts the `.tsv`
