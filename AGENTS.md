@@ -537,8 +537,9 @@ The steps, in order:
    caught by `ts/test/version.test.ts`, `go/version_test.go` and
    `rs/tests/version_test.rs`. Then regenerate `rs/Cargo.lock`
    (`cd rs && cargo update --workspace`): `ci/rust/run.sh` reads the
-   crate's own entry there and fails on a stale one, and no GitHub
-   workflow runs that gate, so nothing else catches it.
+   crate's own entry there and fails on a stale one, and
+   `.github/workflows/rust.yml` runs that gate on every push and pull
+   request that touches `rs/`, so a stale lock turns the bump red.
 2. Verify against the **published** dependencies rather than your checkout.
    The release runner installs fresh from the registry; a working tree
    usually does not, so reproduce that before believing anything:
