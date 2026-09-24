@@ -6,7 +6,7 @@ A [TOML](https://toml.io) parser, built as a
 into plain JavaScript objects.
 
 [![npm version](https://img.shields.io/npm/v/@tabnas/toml.svg)](https://npmjs.com/package/@tabnas/toml)
-[![build](https://github.com/tabnas/toml/actions/workflows/build.yml/badge.svg)](https://github.com/tabnas/toml/actions/workflows/build.yml)
+[![CI](https://github.com/tabnas/toml/actions/workflows/ci.yml/badge.svg)](https://github.com/tabnas/toml/actions/workflows/ci.yml)
 
 ## Install
 

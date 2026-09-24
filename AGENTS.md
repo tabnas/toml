@@ -42,7 +42,7 @@ sweep, an install or a fetch, a release, a wait on CI, a benchmark, a
 script or loop you write, and anything sent to the background.
 
 - **Minimal is enough.** One line with the step and a count, such as
-  `conformance: 412/1500 (27%)`, meets it. When no total is known, print
+  `conformance: 412 of 1500 (27%)`, meets it. When no total is known, print
   what is known (the step, the current item, the elapsed time) and say the
   percentage is unknown rather than inventing one.
 - **Build it into what you write.** A script or loop prints a line per
@@ -811,7 +811,7 @@ value as hostile text.
 `.github/workflows/ci.yml` is a thin caller: it delegates to the
 org-standard reusable workflow
 `tabnas/.github/.github/workflows/polyglot-ci.yml@main`, passing
-`deps: "parser debug json abnf railroad jsonic"` — the sibling tabnas
+`deps: "parser support debug json jsonic"` — the sibling tabnas
 repos this one is checked out next to and built against. The reusable
 workflow owns the matrix (Node/Go versions, OSes), the sibling clone +
 topo build, the `core.autocrlf false` setting (CRLF corrupts the `.tsv`

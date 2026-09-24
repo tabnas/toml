@@ -10,7 +10,7 @@
 A [TOML](https://toml.io) parser built as a grammar plugin on the
 [tabnas](https://github.com/tabnas/parser) engine and the
 [jsonic](https://github.com/tabnas/jsonic) relaxed-JSON grammar. One
-grammar, three runtimes: a TypeScript/JavaScript plugin, a Go port and a
+grammar, three runtimes: a TypeScript/JavaScript plugin, a Go port, and a
 Rust port that parse the same syntax into native objects, maps and
 values.
 
