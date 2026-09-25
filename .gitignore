@@ -47,3 +47,5 @@ ts/test/toml-test/
 
 # Rust build output (rs/target).
 target/
+
+.DS_Store
