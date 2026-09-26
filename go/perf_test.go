@@ -1,6 +1,8 @@
 package tabnastoml
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -54,4 +56,51 @@ func TestParseReusesInstance(t *testing.T) {
 			n, conv, reuse, float64(conv)/float64(reuse))
 	}
 	t.Logf("Parse()=%v  reuse=%v  ratio=%.2fx", conv, reuse, float64(conv)/float64(reuse))
+}
+
+// tomlTables is TOML of n array tables, each with strings in it.
+func tomlTables(n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "[[item]]\nid = %d\nname = \"item %d\"\ntags = [\"a\", \"b\"]\n\n", i, i)
+	}
+	return b.String()
+}
+
+// TestParseIsLinear: a parse takes time in proportion to the length of the
+// document. The Rust port's string matcher used to copy the whole of the
+// rest of the source at every token, so its parse time grew with the SQUARE
+// of the length (4,000 tables took 23 seconds rather than 0.4). This port
+// indexes the source in place; the test keeps it that way. Mirrors
+// parse_time_is_linear_in_document_length in rs/tests/perf_test.rs and
+// ts/test/perf.test.ts.
+//
+// Machine-independent like the test above: it compares a document with
+// four times as much in it, in the same run. Linear time makes that about
+// 4x; quadratic makes it 16x. The limit, 8x, sits between.
+func TestParseIsLinear(t *testing.T) {
+	const small = 250
+	j := MakeJsonic()
+	timeOf := func(src string) time.Duration {
+		best := time.Duration(0)
+		for run := 0; run < 3; run++ {
+			t0 := time.Now()
+			if _, err := j.Parse(src); err != nil {
+				t.Fatalf("the tables do not parse: %v", err)
+			}
+			if took := time.Since(t0); run == 0 || took < best {
+				best = took
+			}
+		}
+		return best
+	}
+	few := timeOf(tomlTables(small))
+	many := timeOf(tomlTables(4 * small))
+	ratio := float64(many) / float64(max(few, 1))
+	if ratio > 8 {
+		t.Errorf("parse time grows faster than document length: %d tables took %v and %d took %v "+
+			"(ratio %.1fx; linear is about 4x, quadratic 16x). Something per token is reading "+
+			"the rest of the source.", small, few, 4*small, many, ratio)
+	}
+	t.Logf("%d tables=%v  %d tables=%v  ratio=%.2fx", small, few, 4*small, many, ratio)
 }

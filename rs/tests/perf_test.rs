@@ -55,3 +55,56 @@ fn parse_reuses_its_instance() {
         convenience.as_secs_f64() / reuse.as_secs_f64().max(f64::MIN_POSITIVE)
     );
 }
+
+/// TOML of `n` array tables, each with strings in it.
+fn tables(n: usize) -> String {
+    use std::fmt::Write;
+    let mut src = String::new();
+    for i in 0..n {
+        write!(
+            src,
+            "[[item]]\nid = {i}\nname = \"item {i}\"\ntags = [\"a\", \"b\"]\n\n"
+        )
+        .expect("a String takes any write");
+    }
+    src
+}
+
+// A parse takes time in proportion to the length of the document. The
+// string matcher used to copy the whole of the rest of the source at every
+// token, before it had even looked for a quote, so parse time grew with the
+// SQUARE of the length: 4,000 tables took 23 seconds rather than 0.4.
+// Mirrors `TestParseIsLinear` in go/perf_test.go and ts/test/perf.test.ts.
+//
+// Machine-independent like the test above: it compares a document with
+// four times as much in it, in the same run. Linear time makes that about
+// 4x; quadratic made it 16x. The limit, 8x, sits between.
+#[test]
+fn parse_time_is_linear_in_document_length() {
+    const SMALL: usize = 250;
+    let parser = tabnas_toml::make();
+    let time = |src: &str| {
+        (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                parser.parse(src).expect("the tables parse");
+                start.elapsed()
+            })
+            .min()
+            .expect("three runs")
+    };
+    let small = time(&tables(SMALL));
+    let large = time(&tables(4 * SMALL));
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(f64::MIN_POSITIVE);
+    assert!(
+        ratio <= 8.0,
+        "parse time grows faster than document length: {SMALL} tables took {small:?} and \
+         {} took {large:?} (ratio {ratio:.1}x; linear is about 4x, quadratic 16x). Something \
+         per token is reading the rest of the source.",
+        4 * SMALL
+    );
+    println!(
+        "{SMALL} tables={small:?}  {} tables={large:?}  ratio={ratio:.2}x",
+        4 * SMALL
+    );
+}
