@@ -56,14 +56,22 @@ pub(crate) fn localtime_re() -> &'static Regex {
 /// custom matcher is not told which slot it is at, so every position of
 /// every alternate in the current phase is scanned, which is the same
 /// heuristic both other ports use.
-fn is_key_context(id_tin: Tin, rule: &Rule) -> bool {
+///
+/// Only the alternates the options enable count. The grammar excludes
+/// jsonic, and TypeScript's `tcol`, which the canonical heuristic reads,
+/// is collated after `filterRules` has removed the excluded alternates.
+/// Here they stay in the spec, and jsonic's `val` names `#KEY #CL`, which
+/// with `KEY` set to `#ST #ID` would make every value position look like
+/// a key one: a date there became a bare key rather than a date.
+fn is_key_context(lexer: &Lexer<'_>, id_tin: Tin, rule: &Rule) -> bool {
     let alts = if RuleState::Close == rule.state {
         &rule.spec.close
     } else {
         &rule.spec.open
     };
-    alts.iter()
-        .any(|alt| alt.s.iter().any(|position| position.contains(&id_tin)))
+    alts.iter().any(|alt| {
+        lexer.alt_enabled(alt) && alt.s.iter().any(|position| position.contains(&id_tin))
+    })
 }
 
 /// The whole match and its capture groups, in the shape the `val`
@@ -98,7 +106,7 @@ fn date_matcher(
     let scalars = matched.chars().count();
 
     let id_tin = lexer.token_tin("#ID");
-    let token = if is_key_context(id_tin, rule) {
+    let token = if is_key_context(lexer, id_tin, rule) {
         // A bare key that merely LOOKS like a date is not a date, so its
         // components are not required to be in range: `2006-01-32 = 1`
         // defines a key, and a range check here would be one applied to a
