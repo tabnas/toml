@@ -17,6 +17,8 @@
 //! `strmatcher_col_test.go`; here there is no second implementation of it
 //! to drift.
 
+use std::cell::Cell;
+
 use tabnas::{Context, ImperativeLexMatcher, Lexer, Options, Rule, Token, Value, TIN_ST};
 
 /// The unknown-escape sentinel. The canonical matcher keeps an unknown
@@ -92,52 +94,143 @@ fn two_hex(text: &str) -> Option<u32> {
         .flatten()
 }
 
-#[allow(clippy::too_many_lines)]
+/// How many characters of source a string scan first copies. The window
+/// doubles whenever the scan reads past it, so a string costs time in
+/// proportion to its own length rather than to the rest of the document.
+const FIRST_WINDOW: usize = 256;
+
 fn toml_string_matcher(
     lexer: &mut Lexer<'_>,
     _rule: &mut Rule,
     _context: &mut Context,
 ) -> Option<Token> {
-    let point = lexer.point();
-    let source: Vec<char> = lexer.remaining().chars().collect();
-    let length = source.len();
-    if 0 == length {
-        return None;
-    }
-
-    let delimiter = source[0];
+    // Look before copying anything. The engine consults this matcher at
+    // nearly every token, and copying the rest of the source on each call
+    // made a parse quadratic in its length: 4,000 tables took 23 seconds.
+    let delimiter = lexer.remaining().chars().next()?;
     if '\'' != delimiter && '"' != delimiter {
         return None;
     }
+    // Absolute SCALAR index of a string's first character, for error
+    // spans: `bad_span` indexes scalars, and `site.si` is a byte offset.
+    let origin = lexer.point().site.pos;
+    let mut want = FIRST_WINDOW;
+    loop {
+        let window = Window::new(lexer.forward(want), want);
+        let scanned = scan(&window, delimiter, origin);
+        if window.short.get() {
+            want = want.saturating_mul(2);
+            continue;
+        }
+        return Some(match scanned {
+            Scan::Bad { why, start, end } => lexer.bad_span(why, start, end),
+            Scan::String {
+                value,
+                text,
+                advance,
+            } => {
+                lexer.advance_chars(advance);
+                lexer.token("#ST", TIN_ST, Value::String(value), text, end(lexer))
+            }
+        });
+    }
+}
 
-    // Absolute SCALAR index of the local index `index`, for error spans:
-    // `bad_span` indexes scalars, and `site.si` is a byte offset.
-    let origin = point.site.pos;
-    let span = |start: usize, end: usize| (origin + start, origin + end);
+/// The source from the cursor on, as far as a scan has needed it: all of
+/// the rest of it when `whole`, else a prefix. Reading past the end of a
+/// prefix marks the window `short`, and the scan is then repeated over a
+/// longer one, so every answer is the one the whole source gives.
+struct Window {
+    chars: Vec<char>,
+    whole: bool,
+    short: Cell<bool>,
+}
+
+impl Window {
+    fn new(text: &str, want: usize) -> Window {
+        let chars: Vec<char> = text.chars().collect();
+        // `forward` answers fewer than `want` only at the end of source.
+        let whole = chars.len() < want;
+        Window {
+            chars,
+            whole,
+            short: Cell::new(false),
+        }
+    }
+
+    /// The character at `index`.
+    fn get(&self, index: usize) -> Option<char> {
+        let found = self.chars.get(index).copied();
+        if found.is_none() && !self.whole {
+            self.short.set(true);
+        }
+        found
+    }
+
+    /// How many characters the rest of the source has, as far as this
+    /// window can say: a prefix does not know, so it answers "enough".
+    fn len(&self) -> usize {
+        if self.whole {
+            self.chars.len()
+        } else {
+            usize::MAX
+        }
+    }
+
+    /// The characters from `begin` to `end`.
+    fn text(&self, begin: usize, end: usize) -> String {
+        if end > self.chars.len() && !self.whole {
+            self.short.set(true);
+        }
+        let end = end.min(self.chars.len());
+        self.chars[begin.min(end)..end].iter().collect()
+    }
+}
+
+/// What a scan found: a string token, or a bad one.
+enum Scan {
+    Bad {
+        why: &'static str,
+        start: usize,
+        end: usize,
+    },
+    String {
+        value: String,
+        text: String,
+        advance: usize,
+    },
+}
+
+/// Scan the string that opens with `delimiter` at the head of `source`.
+/// `origin` is where that is in the whole source, for error spans.
+#[allow(clippy::too_many_lines)]
+fn scan(source: &Window, delimiter: char, origin: usize) -> Scan {
+    let length = source.len();
+    let span = |why: &'static str, start: usize, end: usize| Scan::Bad {
+        why,
+        start: origin + start,
+        end: origin + end,
+    };
 
     let begin = 0_usize;
     let mut index = 0_usize;
     let mut is_multiline = false;
 
-    if Some(&delimiter) == source.get(1) {
-        if Some(&delimiter) != source.get(2) {
+    if Some(delimiter) == source.get(1) {
+        if Some(delimiter) != source.get(2) {
             // `""` or `''`: the empty string.
-            let text: String = source[..2].iter().collect();
-            lexer.advance_chars(2);
-            return Some(lexer.token(
-                "#ST",
-                TIN_ST,
-                Value::String(String::new()),
-                text,
-                end(lexer),
-            ));
+            return Scan::String {
+                value: String::new(),
+                text: source.text(0, 2),
+                advance: 2,
+            };
         }
         index += 2;
         is_multiline = true;
     }
 
     // A newline immediately after the opening delimiter is trimmed.
-    if is_multiline && Some(&'\n') == source.get(index + 1) {
+    if is_multiline && Some('\n') == source.get(index + 1) {
         index += 1;
     }
 
@@ -150,15 +243,13 @@ fn toml_string_matcher(
 
     while index < length {
         index += 1;
-        let Some(character) = source.get(index).copied() else {
-            let (start, end) = span(begin, index);
-            return Some(lexer.bad_span("unterminated_string", start, end));
+        let Some(character) = source.get(index) else {
+            return span("unterminated_string", begin, index);
         };
 
         if '\n' == character {
             if !is_multiline {
-                let (start, end) = span(index, index + 1);
-                return Some(lexer.bad_span("unprintable", start, end));
+                return span("unprintable", index, index + 1);
             }
             value.push('\n');
             continue;
@@ -166,11 +257,11 @@ fn toml_string_matcher(
 
         if delimiter == character {
             if is_multiline {
-                if Some(&delimiter) != source.get(index + 1) {
+                if Some(delimiter) != source.get(index + 1) {
                     value.push(delimiter);
                     continue;
                 }
-                if Some(&delimiter) != source.get(index + 2) {
+                if Some(delimiter) != source.get(index + 2) {
                     value.push(delimiter);
                     value.push(delimiter);
                     index += 1;
@@ -179,11 +270,11 @@ fn toml_string_matcher(
                 index += 2;
                 // Up to two further delimiters belong to the value, not
                 // to the terminator: `""""hello""""` is `"hello"`.
-                if Some(&delimiter) == source.get(index + 1) {
+                if Some(delimiter) == source.get(index + 1) {
                     value.push(delimiter);
                     index += 1;
                 }
-                if Some(&delimiter) == source.get(index + 1) {
+                if Some(delimiter) == source.get(index + 1) {
                     value.push(delimiter);
                     index += 1;
                 }
@@ -194,8 +285,7 @@ fn toml_string_matcher(
         }
 
         if is_control_other_than_tab(character) {
-            let (start, end) = span(index, index + 1);
-            return Some(lexer.bad_span("unprintable", start, end));
+            return span("unprintable", index, index + 1);
         }
 
         if '\'' == delimiter {
@@ -210,7 +300,7 @@ fn toml_string_matcher(
         }
 
         index += 1;
-        let escape = source.get(index).copied();
+        let escape = source.get(index);
 
         if let Some(replacement) = escape.and_then(escape_char) {
             value.push(replacement);
@@ -220,10 +310,10 @@ fn toml_string_matcher(
         match escape {
             Some('x') => {
                 index += 1;
-                let rest: String = source[index.min(length)..].iter().collect();
+                // `two_hex` reads two characters, and only two.
+                let rest: String = (index..index + 2).map_while(|at| source.get(at)).collect();
                 let Some(code) = two_hex(&rest) else {
-                    let (start, end) = span(index.saturating_sub(2), index + 2);
-                    return Some(lexer.bad_span("invalid_ascii", start, end));
+                    return span("invalid_ascii", index.saturating_sub(2), index + 2);
                 };
                 value.push(char::from_u32(code).unwrap_or(char::REPLACEMENT_CHARACTER));
                 // The loop's own step takes the second digit.
@@ -235,12 +325,9 @@ fn toml_string_matcher(
                 let mut digits = String::new();
                 for _ in 0..size {
                     index += 1;
-                    match source.get(index).copied() {
+                    match source.get(index) {
                         Some(digit) if is_hexadecimal_lax(digit) => digits.push(digit),
-                        _ => {
-                            let (start, end) = span(begin_unicode, index);
-                            return Some(lexer.bad_span("invalid_unicode", start, end));
-                        }
+                        _ => return span("invalid_unicode", begin_unicode, index),
                     }
                 }
                 // Range-checked BEFORE the code point is built, because
@@ -249,8 +336,7 @@ fn toml_string_matcher(
                 // uncaught internal error wearing a diagnostic's clothes.
                 let code = hex_prefix(&digits);
                 let Some(code) = code.filter(|code| *code <= 0x0010_FFFF) else {
-                    let (start, end) = span(begin_unicode, index);
-                    return Some(lexer.bad_span("invalid_unicode", start, end));
+                    return span("invalid_unicode", begin_unicode, index);
                 };
                 // A lone surrogate has no Rust representation and folds to
                 // U+FFFD, the engine-wide behaviour recorded in
@@ -261,9 +347,9 @@ fn toml_string_matcher(
                 // A line-ending backslash trims every whitespace character
                 // up to the next non-whitespace one.
                 loop {
-                    match source.get(index + 1).copied() {
+                    match source.get(index + 1) {
                         Some(' ' | '\t' | '\n') => index += 1,
-                        Some('\r') if Some(&'\n') == source.get(index + 2) => index += 2,
+                        Some('\r') if Some('\n') == source.get(index + 2) => index += 2,
                         _ => break,
                     }
                 }
@@ -273,13 +359,15 @@ fn toml_string_matcher(
     }
 
     if !closed {
-        let (start, end) = span(begin, index);
-        return Some(lexer.bad_span("unterminated_string", start, end));
+        return span("unterminated_string", begin, index);
     }
 
-    let text: String = source[begin..index.min(length)].iter().collect();
-    lexer.advance_chars(index.min(length));
-    Some(lexer.token("#ST", TIN_ST, Value::String(value), text, end(lexer)))
+    let advance = index.min(length);
+    Scan::String {
+        value,
+        text: source.text(begin, advance),
+        advance,
+    }
 }
 
 /// A string token's point is the cursor AFTER the string, not before it.
