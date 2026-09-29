@@ -120,7 +120,7 @@ publish tagged releases):
   the engine types (`jsonic.Make`, `jsonic.Jsonic`, `jsonic.Rule`, …),
   so the Go files import `jsonic`, not `parser`, directly.
 
-- Rust: `rs/Cargo.toml` takes `tabnas = { path = "../../parser/rs" }`,
+- Rust: `rs/Cargo.toml` takes `tabnas = { package = "tabnas-parser", path = "../../parser/rs" }`,
   `tabnas-jsonic = { path = "../../jsonic/rs" }` and, as a
   dev-dependency for the shared fixtures,
   `tabnas-support = { path = "../../support/rs" }`. jsonic in turn takes
