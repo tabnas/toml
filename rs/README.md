@@ -105,7 +105,7 @@ next to this repository, then point at the two you name directly:
 [dependencies]
 tabnas-toml = { path = "../toml/rs" }
 tabnas-jsonic = { path = "../jsonic/rs" }
-tabnas = { path = "../parser/rs" }
+tabnas = { package = "tabnas-parser", path = "../parser/rs" }
 ```
 
 All three entries are needed for the examples above. A crate's

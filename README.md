@@ -48,7 +48,7 @@ at three of them:
 [dependencies]
 tabnas-toml = { path = "../toml/rs" }
 tabnas-jsonic = { path = "../jsonic/rs" }
-tabnas = { path = "../parser/rs" }
+tabnas = { package = "tabnas-parser", path = "../parser/rs" }
 ```
 
 `json` carries no entry of its own: it is how `tabnas-jsonic` reaches
