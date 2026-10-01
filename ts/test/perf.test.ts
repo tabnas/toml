@@ -117,3 +117,98 @@ test('parse time is linear in document length', () => {
       `ratio=${ratio.toFixed(2)}x`,
   )
 })
+
+// A dotted table header takes time in proportion to its number of segments.
+// The Rust port used to walk the tree from its root on every segment, copy
+// the whole path several times over and keep one more copy of it per
+// segment, so its time grew faster than the square of the header's length
+// (tabnas/toml#81: 10,000 segments took two minutes). This runtime hands each
+// segment the table the previous one reached, as `r.prev.node`, which is
+// constant work; the test keeps it that way. Mirrors TestDottedHeaderIsLinear
+// in go/perf_test.go and a_dotted_header_takes_time_in_proportion_to_its_length
+// in rs/tests/perf_test.rs.
+//
+// Machine-independent like the test above: it compares a header four times
+// as long, in the same run. Linear time makes that about 4x; quadratic makes
+// it 16x. The limit, 8x, sits between. A collection or a burst of load on a
+// shared runner can land on either side, so each side is the fastest of five
+// parses and the comparison gets three attempts.
+test('a dotted header takes time in proportion to its length', () => {
+  const header = (n: number) =>
+    '[' + Array(n).fill('a').join('.') + ']\nx = 1\n'
+  const short = 2000
+  const toml = new Tabnas().use(jsonic).use(Toml)
+  const time = (src: string) => {
+    let best = Infinity
+    for (let run = 0; run < 5; run++) {
+      const t0 = process.hrtime.bigint()
+      toml.parse(src)
+      best = Math.min(best, Number(process.hrtime.bigint() - t0))
+    }
+    return best
+  }
+  const few = header(short)
+  const many = header(4 * short)
+  // Compile the hot paths before either measurement.
+  toml.parse(few)
+  toml.parse(many)
+
+  const seen: string[] = []
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const fewTime = time(few)
+    const manyTime = time(many)
+    const ratio = manyTime / Math.max(fewTime, 1)
+    seen.push(`${fewTime}ns and ${manyTime}ns (${ratio.toFixed(1)}x)`)
+    if (ratio <= 8) {
+      console.log(
+        `perf: ${short} segments=${fewTime}ns ${4 * short} segments=` +
+          `${manyTime}ns ratio=${ratio.toFixed(2)}x`,
+      )
+      return
+    }
+  }
+  assert.fail(
+    `a dotted header's parse time grows faster than its length: ${short} and ` +
+      `${4 * short} segments took ${seen.join(', then ')} (linear is about ` +
+      `4x, quadratic 16x). Something per segment is walking the path from ` +
+      `the root, copying it, or keeping a copy of it.`,
+  )
+})
+
+// A header thousands of segments long builds exactly the tables it names, and
+// later headers walk back down through them: one adds a table beside the first
+// one's key, two arrays of tables append to the same array, and one that
+// treats a key holding a value as a table is refused, with the same diagnosis
+// as a short header gets. Mirrors a_long_dotted_header_builds_every_table_it_names
+// in rs/tests/perf_test.rs and TestLongDottedHeaderValue in go/perf_test.go.
+test('a long dotted header builds every table it names', () => {
+  const depth = 5000
+  const path = Array.from({ length: depth }, (_, i) => `k${i}`).join('.')
+  const src =
+    `[${path}]\nx = 1\n[${path}.y]\nz = 2\n` +
+    `[[${path}.list]]\nn = 1\n[[${path}.list]]\nn = 2\n`
+  const toml = new Tabnas().use(jsonic).use(Toml)
+
+  // Walked with a loop: a value 5,000 deep is not compared with the call
+  // stack.
+  let table: any = toml.parse(src)
+  for (let level = 0; level < depth; level++) {
+    assert.deepStrictEqual(
+      Object.keys(table),
+      [`k${level}`],
+      `level ${level} holds k${level} and nothing else`,
+    )
+    table = table[`k${level}`]
+  }
+  assert.strictEqual(
+    JSON.stringify(table),
+    '{"x":1,"y":{"z":2},"list":[{"n":1},{"n":2}]}',
+  )
+
+  assert.throws(
+    () => toml.parse(`${src}[${path}.x.q]\n`),
+    (error: any) =>
+      'toml_key_conflict' === error.code &&
+      error.message.includes('cannot define x, it already has the value 1'),
+  )
+})

@@ -11,7 +11,7 @@ only covers what is specific to this crate.
 |---|---|
 | `src/lib.rs` | the embedded grammar, the document adjustments, `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION`, and the translation parts `manifest_text` and `render_text`, `include_str!` of the copies in `translate/` |
 | `src/refs.rs` | every `@`-named reference the grammar uses: state actions, alternate actions, conditions, conditional `p:`/`r:` targets |
-| `src/node.rs` | table nodes as PATHS (see below), and the key-conflict diagnosis |
+| `src/node.rs` | table nodes as PATHS (see below), the cursor that keeps a dotted header linear, and the key-conflict diagnosis |
 | `src/strmatcher.rs` | TOML's basic, literal and multi-line strings |
 | `src/datematcher.rs` | the context-aware date and time matchers, and the leading-BOM matcher |
 | `src/daterange.rs` | whether a date or time whose SHAPE matched denotes a real instant |
@@ -22,7 +22,7 @@ only covers what is specific to this crate.
 | `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
 | `tests/translate_test.rs` | the translation parts: the render the embedded manifest names is the one `render_text()` embeds, the manifest's shapes and loss lines, and every render definition named `toml-...` |
-| `tests/perf_test.rs` | `parse` reuses its instance |
+| `tests/perf_test.rs` | `parse` reuses its instance; a parse, and a dotted header, take time in proportion to their length; a header 5,000 segments deep |
 | `tests/version_test.rs` | Cargo.toml == `VERSION` == ts/package.json |
 | `tests/common/mod.rs` | shared helpers: spec dir, repo dir, value and failure conversion |
 | `README.md` | the crate front page, prose-gated; its `rust` fences are doctests of this crate |
@@ -65,35 +65,88 @@ COPIES as soon as a second handle exists. A clone of a nested map is a
 snapshot, and writes to it never reach the document.
 
 So here a node is a CELL plus a PATH: the `Rc<RefCell<Value>>` the rule
-already carries, and the list of keys and indices from that cell's value
-down to the table. Every read walks the path from the cell and every
-write walks it again, so a write lands in the real tree however the
-`Arc`s happen to be shared. The path lives in the rule's `u` bag under
-`node::PATH_KEY`, because `u` is per-rule and merged key by key, so an
-alternate's own `u: { ... }` does not disturb it.
+already carries, and the keys and indices from that cell's value down to
+the table. A write walks the path from the cell, so it lands in the real
+tree however the `Arc`s happen to be shared. A rule keeps its path in its
+`u` bag under `node::PATH_KEY`, because `u` is per-rule and merged key by
+key, so an alternate's own `u: { ... }` does not disturb it. What it keeps
+there is a `node::Path`: two numbers naming a prefix of a buffer in the
+parse's path registry, which lives in the context's `u` bag.
 
 The translation is mechanical, and each canonical line has exactly one
 form here:
 
 | canonical | here |
 |---|---|
-| `r.node = r.parent.node` | `set_path(rule, &parent_path(rule))` |
-| `r.node = tableAt(r.parent.node, key, …)` | `set_path(rule, &table_at(&cell, &parent_path(rule), key, …)?)` |
-| `Array.isArray(r.prev.node)` | `node::is_list(&cell, &prev_path(rule))` |
-| `Object.assign(r.node, r.child.node)` | `merge_into(&cell, &path_of(rule), &child_value)` |
-| `r.node[key] = r.child.node` | `node::write(&cell, &(path + key), child_value)` |
-| `r.prev.node.push(node())` | `node::push(&cell, &prev_path(rule), new_map())` |
+| `r.node = r.parent.node` | `set_path(rule, parent_path(rule))` |
+| `r.node = tableAt(r.parent.node, key, …)` | `cursor.table_at(context, &key, …)?` on a `Cursor` at `parent_path(rule)` |
+| `Array.isArray(r.prev.node)` | `cursor.is_list()` on a `Cursor` at `prev_path(rule)` |
+| `Object.assign(r.node, r.child.node)` | `merge_into(context, &cell, path_of(rule), &child_value)` |
+| `r.node[key] = r.child.node` | `write_at(context, &cell, path_of(rule), key, child_value)` |
+| `r.prev.node.push(node())` | `cursor.push_table(context)` on a `Cursor` at `prev_path(rule)` |
 
-Two rules follow from it:
+Three rules follow from it:
 
-- **`node::write` creates only its FINAL segment.** Every caller builds
-  the parent first, through `table_at` or `array_at`. A write whose
-  parent does not exist is a silent no-op, which is what the first cut of
-  this got wrong: `[a]` produced `{}` because `write(cell, ["a"], …)`
-  navigated to a key that was not there yet.
+- **A write creates only its FINAL segment.** Every caller builds the
+  parent first, through `table_at` or `array_at`. A write whose parent
+  does not exist is a silent no-op, which is what the first cut of this
+  got wrong: `[a]` produced `{}` because the write navigated to a key that
+  was not there yet. A `Cursor` reproduces those no-ops exactly: a
+  position whose parent cannot take it is `Absent`.
 - **Never hold a cloned sub-value across a write.** Reads clone, and a
   clone bumps the `Arc`, so a write while one is alive copies a container
-  it did not need to.
+  it did not need to. A `Cursor` holds one between two segments of a
+  header, deliberately, and lets go of it before anything writes.
+- **A header costs time in proportion to its length.** See the next
+  section.
+
+## A dotted header is linear, and what that costs in exactness
+
+Each segment of a header used to call `prev_path`, which rebuilt the whole
+path from the rule's `u` bag, walk the tree from the cell's root once or
+twice to look at and create the next table, and store a fresh copy of the
+longer path on its rule. The engine keeps every rule a replace loop passes
+through (`prev_rule`, unbounded by default), so a header of n segments
+also held n paths of up to n segments. In a release build 2,000 segments
+took a second and 10,000 two minutes and several gigabytes, where the other
+two ports, handed `r.prev.node` by reference, take milliseconds
+(tabnas/toml#81). Two things in `node.rs` make it O(n):
+
+- **Paths are handles, not copies.** A path buffer only ever grows, so
+  every prefix stays valid, and extending the newest path in a buffer
+  appends in place. Storing a path on a rule costs two numbers.
+- **The five header actions move one `Cursor`.** Each resumes the cursor
+  the previous segment parked in the context's `u` bag and `conclude`s by
+  parking it again. While a header walks through tables that exist, the
+  cursor holds a read-only handle on the node it has reached: nothing
+  writes to the tree between two segments of a header. Once a segment
+  creates a table, every later one lands in something just created, which
+  is empty, so nothing is looked up and nothing can conflict. The created
+  containers are recorded and written in ONE walk when the header ends,
+  when an action fails (so a diagnostic is raised over the same tree as
+  before), or before anything else reads or writes the tree (`settle`).
+
+The document is the same, table for table and key for key, because each
+table is created in the same container, under the same key, in the same
+order. What moves is the moment the created tables reach the tree: from
+each segment to the end of the header. No parse result can see that,
+except a parse that RECOVERS from errors, which reads the whole tree after
+every action as its partial value. So under `parse.recover.enabled`,
+`Cursor::park` writes everything out at the end of each action instead,
+and the tree after every action is what it always was. That mode keeps the
+old O(path) per segment; it already copies the spine of the tree on every
+write, because the partial value it holds shares it.
+
+The proof is in `tests/perf_test.rs`:
+`a_dotted_header_takes_time_in_proportion_to_its_length` compares 2,000
+segments with 8,000 against a limit of 8x (linear is about 4x; the old
+code fails it within a minute and a half, in a debug build as in a release
+one, because the long header is parsed against a deadline), and
+`a_long_dotted_header_builds_every_table_it_names` pins the value and the
+diagnosis of headers 5,000 segments deep. Both mirror tests in the other
+two ports. Dotted KEYS (`a.b.c = 1`, the `dive` rule) still walk from the
+root on every segment, through `Cursor::walk`: they are a push chain, which
+is tabnas/toml#78, and making the key linear belongs with that change.
 
 ## Two lifecycle actions that are not where the canonical ones are
 
