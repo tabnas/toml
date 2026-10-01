@@ -1,10 +1,14 @@
 package tabnastoml
 
 import (
+	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	jsonic "github.com/tabnas/jsonic/go"
 )
 
 // TestParseReusesInstance guards against a performance regression where the
@@ -103,4 +107,102 @@ func TestParseIsLinear(t *testing.T) {
 			"the rest of the source.", small, few, 4*small, many, ratio)
 	}
 	t.Logf("%d tables=%v  %d tables=%v  ratio=%.2fx", small, few, 4*small, many, ratio)
+}
+
+// tomlDottedHeader is a dotted table header of n segments, [a.a.….a], with
+// one key in its table.
+func tomlDottedHeader(n int) string {
+	return "[" + strings.TrimSuffix(strings.Repeat("a.", n), ".") + "]\nx = 1\n"
+}
+
+// TestDottedHeaderIsLinear: a dotted table header takes time in proportion
+// to its number of segments. The Rust port used to walk the tree from its
+// root on every segment, copy the whole path several times over and keep
+// one more copy of it per segment, so its time grew faster than the square
+// of the header's length (tabnas/toml#81: 10,000 segments took two
+// minutes). This port hands each segment the table the previous one
+// reached, as r.Prev.Node, which is constant work; the test keeps it that
+// way. Mirrors a_dotted_header_takes_time_in_proportion_to_its_length in
+// rs/tests/perf_test.rs and ts/test/perf.test.ts.
+//
+// Machine-independent like the test above: it compares a header four times
+// as long, in the same run. Linear time makes that about 4x; quadratic
+// makes it 16x. The limit, 8x, sits between. Each parse starts after a
+// collection, so the garbage of the one before is not collected inside
+// the clock, and a burst of load on a shared runner can still land on
+// either side, so each side is the fastest of five parses and the
+// comparison gets three attempts.
+func TestDottedHeaderIsLinear(t *testing.T) {
+	const short = 2000
+	j := MakeJsonic()
+	timeOf := func(src string) time.Duration {
+		best := time.Duration(0)
+		for run := 0; run < 5; run++ {
+			runtime.GC()
+			t0 := time.Now()
+			if _, err := j.Parse(src); err != nil {
+				t.Fatalf("the header does not parse: %v", err)
+			}
+			if took := time.Since(t0); run == 0 || took < best {
+				best = took
+			}
+		}
+		return best
+	}
+	few := tomlDottedHeader(short)
+	many := tomlDottedHeader(4 * short)
+	timeOf(few)
+	timeOf(many)
+	var seen []string
+	for attempt := 0; attempt < 3; attempt++ {
+		fewTime := timeOf(few)
+		manyTime := timeOf(many)
+		ratio := float64(manyTime) / float64(max(fewTime, 1))
+		seen = append(seen, fmt.Sprintf("%v and %v (%.1fx)", fewTime, manyTime, ratio))
+		if ratio <= 8 {
+			t.Logf("%d segments=%v  %d segments=%v  ratio=%.2fx", short, fewTime, 4*short, manyTime, ratio)
+			return
+		}
+	}
+	t.Errorf("a dotted header's parse time grows faster than its length: %d and %d segments "+
+		"took %s (linear is about 4x, quadratic 16x). Something per segment is walking the "+
+		"path from the root, copying it, or keeping a copy of it.",
+		short, 4*short, strings.Join(seen, ", then "))
+}
+
+// TestLongDottedHeaderValue: a header thousands of segments long builds
+// exactly the tables it names, and later headers walk back down through
+// them: one adds a table beside the first one's key, and two arrays of
+// tables append to the same array. Mirrors
+// a_long_dotted_header_builds_every_table_it_names in rs/tests/perf_test.rs
+// and ts/test/perf.test.ts, which also refuse a header that treats a key
+// holding a value as a table; this port does not diagnose key conflicts
+// (see "Error codes" in AGENTS.md), so that half is theirs alone.
+func TestLongDottedHeaderValue(t *testing.T) {
+	const depth = 5000
+	keys := make([]string, depth)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d", i)
+	}
+	path := strings.Join(keys, ".")
+	src := fmt.Sprintf("[%[1]s]\nx = 1\n[%[1]s.y]\nz = 2\n[[%[1]s.list]]\nn = 1\n[[%[1]s.list]]\nn = 2\n", path)
+	table, err := Parse(src)
+	if err != nil {
+		t.Fatalf("the long headers do not parse: %v", err)
+	}
+	// Walked with a loop, level by level.
+	for level, key := range keys {
+		m, ok := table.(*jsonic.OrderedMap)
+		if !ok || len(m.Keys) != 1 || m.Keys[0] != key {
+			t.Fatalf("level %d should hold %s and nothing else, and holds %v", level, key, table)
+		}
+		table, _ = m.Get(key)
+	}
+	got, err := json.Marshal(table)
+	if err != nil {
+		t.Fatalf("marshal the innermost table: %v", err)
+	}
+	if want := `{"x":1,"y":{"z":2},"list":[{"n":1},{"n":2}]}`; string(got) != want {
+		t.Errorf("the innermost table is %s, want %s", got, want)
+	}
 }

@@ -13,8 +13,8 @@ use std::rc::Rc;
 use tabnas::{ActionError, Context, Rule, Tabnas, Value};
 
 use crate::node::{
-    self, array_at, last_of_list, merge_into, new_map, path_of, push, read, set_path,
-    snapshot_path, table_at, Seg, DEFINE, DESCEND,
+    merge_into, new_map, path_of, set_path, snapshot_path, write_at, Cell, Cursor, Path, DEFINE,
+    DESCEND,
 };
 use crate::strmatcher::make_toml_string_matcher;
 use crate::values::{isodate_val, localtime_val};
@@ -34,18 +34,47 @@ fn key_of(rule: &mut Rule, context: &mut Context) -> String {
 }
 
 /// The cell a rule's table path is relative to.
-fn cell_of(rule: &Rule) -> Rc<RefCell<Value>> {
+fn cell_of(rule: &Rule) -> Cell {
     Rc::clone(&rule.node)
 }
 
 /// The path this rule's PARENT sits at.
-fn parent_path(rule: &Rule) -> Vec<Seg> {
+fn parent_path(rule: &Rule) -> Path {
     snapshot_path(rule.parent_rule.as_ref())
 }
 
 /// The path the rule this one REPLACED sat at.
-fn prev_path(rule: &Rule) -> Vec<Seg> {
+fn prev_path(rule: &Rule) -> Path {
     snapshot_path(rule.prev_rule.as_ref())
+}
+
+/// Whether this header is an array of tables, `[[...]]`.
+fn table_array(rule: &Rule) -> bool {
+    0 < rule.n.get("table_array").copied().unwrap_or(0)
+}
+
+/// The end of every action that moves a table path. On success, record
+/// where the header now stands, then either leave its cursor for the next
+/// segment or, when `done` (the table's body follows), write out what the
+/// header created. On failure, write it out before answering, so the
+/// diagnostic is raised over the same tree as it always was.
+fn conclude(
+    rule: &mut Rule,
+    context: &mut Context,
+    cell: &Cell,
+    cursor: Cursor,
+    outcome: Result<(), ActionError>,
+    done: bool,
+) -> Result<(), ActionError> {
+    if outcome.is_ok() {
+        set_path(rule, cursor.path());
+    }
+    if done || outcome.is_err() {
+        cursor.finish(context, cell);
+    } else {
+        cursor.park(context, cell);
+    }
+    outcome
 }
 
 fn truthy(value: Option<&Value>) -> bool {
@@ -84,7 +113,7 @@ fn register_state_actions(parser: &mut Tabnas) {
     // The document root.
     parser.state_action_ref("@toml-bo", |rule, _context| {
         rule.node = Rc::new(RefCell::new(new_map()));
-        set_path(rule, &[]);
+        set_path(rule, Path::ROOT);
         Ok(())
     });
 
@@ -98,7 +127,7 @@ fn register_state_actions(parser: &mut Tabnas) {
     // silently.
     parser.state_action_ref("@map-bo/append", |rule, _context| {
         rule.node = Rc::new(RefCell::new(new_map()));
-        set_path(rule, &[]);
+        set_path(rule, Path::ROOT);
         Ok(())
     });
 
@@ -111,7 +140,7 @@ fn register_state_actions(parser: &mut Tabnas) {
             rule.node = Rc::clone(&parent.node);
         }
         let path = parent_path(rule);
-        set_path(rule, &path);
+        set_path(rule, path);
         Ok(())
     });
 
@@ -126,18 +155,17 @@ fn register_state_actions(parser: &mut Tabnas) {
         } else {
             parent_path(rule)
         };
-        set_path(rule, &path);
+        set_path(rule, path);
         Ok(())
     });
 
     // Fold the table's body into the table, and reset the header counters
     // for whatever comes next.
-    parser.state_action_ref("@table-bc", |rule, _context| {
+    parser.state_action_ref("@table-bc", |rule, context| {
         if !truthy(rule.u.get("top_dive")) {
             if let Some(child) = rule.child_rule.clone() {
                 let source = child.node.borrow().clone();
-                let path = path_of(rule);
-                merge_into(&cell_of(rule), &path, &source);
+                merge_into(context, &cell_of(rule), path_of(rule), &source);
             }
         }
 
@@ -165,89 +193,84 @@ fn register_state_actions(parser: &mut Tabnas) {
         };
         let value = child.node.borrow().clone();
         let key = key_of(rule, context);
-        let mut path = path_of(rule);
-        path.push(Seg::Key(key));
-        node::write(&cell_of(rule), &path, value);
+        write_at(context, &cell_of(rule), path_of(rule), key, value);
         Ok(())
     });
 }
 
 fn register_alt_actions(parser: &mut Tabnas) {
+    // The five header actions move one `Cursor` along the header, segment
+    // by segment: each resumes the cursor the previous segment parked, and
+    // `conclude`s by parking it again, or by writing out what the header
+    // created once the header is complete. See `node::Cursor`.
     parser.action_with_context("@table-dive-start", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
-        let parent = parent_path(rule);
-
-        let mut candidate = parent.clone();
-        candidate.push(Seg::Key(key.clone()));
-
-        let path = if 0 < rule.n.get("table_array").copied().unwrap_or(0)
-            && node::is_list(&cell, &candidate)
-        {
-            last_of_list(&cell, &candidate)
+        let mut cursor = Cursor::resume(context, &cell, parent_path(rule));
+        let outcome = if table_array(rule) && cursor.has_list(&key) {
+            cursor.enter(context, &key);
+            cursor.last_of_list(context);
+            Ok(())
         } else {
             // A plain-table dive into an existing array of tables walks
             // THROUGH it, which is how `[[x]]` followed by `[x.y]` works.
-            table_at(&cell, &parent, &key, DESCEND)?
+            cursor.table_at(context, &key, DESCEND)
         };
-        set_path(rule, &path);
-        Ok(())
+        conclude(rule, context, &cell, cursor, outcome, false)
     });
 
     parser.action_with_context("@table-dive-mid", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
-        let previous = prev_path(rule);
-
-        let base = if node::is_list(&cell, &previous) {
-            last_of_list(&cell, &previous)
-        } else {
-            previous
-        };
-        let path = table_at(&cell, &base, &key, DESCEND)?;
-        set_path(rule, &path);
-        Ok(())
+        let mut cursor = Cursor::resume(context, &cell, prev_path(rule));
+        if cursor.is_list() {
+            cursor.last_of_list(context);
+        }
+        let outcome = cursor.table_at(context, &key, DESCEND);
+        conclude(rule, context, &cell, cursor, outcome, false)
     });
 
+    // A table's body follows the closing bracket at once; an array of
+    // tables has its new element still to push, in `@table-cs-push`.
     parser.action_with_context("@table-key-cs-head", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
-        let parent = parent_path(rule);
-        let path = if 0 < rule.n.get("table_array").copied().unwrap_or(0) {
-            array_at(&cell, &parent, &key)?
+        let array = table_array(rule);
+        let mut cursor = Cursor::resume(context, &cell, parent_path(rule));
+        let outcome = if array {
+            cursor.array_at(context, &key)
         } else {
-            table_at(&cell, &parent, &key, DEFINE)?
+            cursor.table_at(context, &key, DEFINE)
         };
-        set_path(rule, &path);
-        Ok(())
+        conclude(rule, context, &cell, cursor, outcome, !array)
     });
 
     parser.action_with_context("@table-key-cs-tail", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
-        let previous = prev_path(rule);
-
-        let path = if node::is_list(&cell, &previous) {
-            let last = last_of_list(&cell, &previous);
-            table_at(&cell, &last, &key, DEFINE)?
-        } else if 0 < rule.n.get("table_array").copied().unwrap_or(0) {
-            array_at(&cell, &previous, &key)?
+        let array = table_array(rule);
+        let mut cursor = Cursor::resume(context, &cell, prev_path(rule));
+        let outcome = if cursor.is_list() {
+            cursor.last_of_list(context);
+            cursor.table_at(context, &key, DEFINE)
+        } else if array {
+            cursor.array_at(context, &key)
         } else {
-            table_at(&cell, &previous, &key, DEFINE)?
+            cursor.table_at(context, &key, DEFINE)
         };
-        set_path(rule, &path);
-        Ok(())
+        conclude(rule, context, &cell, cursor, outcome, !array)
     });
 
     parser.action_with_context("@table-cs-push", |rule, context| {
         let cell = cell_of(rule);
-        let previous = prev_path(rule);
-        if !node::is_list(&cell, &previous) {
+        let mut cursor = Cursor::resume(context, &cell, prev_path(rule));
+        if !cursor.is_list() {
             // `[[a]]` where `a` is already a scalar. The array itself is
             // produced by `@table-key-cs-head`, so reaching a non-array
             // here means the key conflicts.
             let key = key_of(rule, context);
-            let existing = read(&cell, &previous).unwrap_or(Value::Undefined);
+            let existing = cursor.value();
+            cursor.finish(context, &cell);
             return Err(ActionError::new(
                 "toml_key_conflict",
                 format!(
@@ -256,12 +279,9 @@ fn register_alt_actions(parser: &mut Tabnas) {
                 ),
             ));
         }
-        let Some(index) = push(&cell, &previous, new_map()) else {
-            return Ok(());
-        };
-        let mut path = previous;
-        path.push(Seg::Index(index));
-        set_path(rule, &path);
+        cursor.push_table(context);
+        set_path(rule, cursor.path());
+        cursor.finish(context, &cell);
         Ok(())
     });
 
@@ -274,10 +294,9 @@ fn register_alt_actions(parser: &mut Tabnas) {
     parser.action_with_context("@dive-key-dot", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
-        let parent = parent_path(rule);
-        let path = table_at(&cell, &parent, &key, DESCEND)?;
-        set_path(rule, &path);
-        Ok(())
+        let mut cursor = Cursor::walk(context, &cell, parent_path(rule));
+        let outcome = cursor.table_at(context, &key, DESCEND);
+        conclude(rule, context, &cell, cursor, outcome, true)
     });
 }
 
