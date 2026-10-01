@@ -21,6 +21,8 @@ on:
     branches: [ '**' ]
     paths:
       - 'rs/**'
+      - 'tabnas.plugin.json'
+      - 'alchemy/**'
       - 'test/**'
       - 'toml-grammar.jsonic'
       - 'ts/embed-grammar.js'
@@ -31,6 +33,8 @@ on:
   pull_request:
     paths:
       - 'rs/**'
+      - 'tabnas.plugin.json'
+      - 'alchemy/**'
       - 'test/**'
       - 'toml-grammar.jsonic'
       - 'ts/embed-grammar.js'
