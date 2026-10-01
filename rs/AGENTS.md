@@ -9,17 +9,19 @@ only covers what is specific to this crate.
 
 | Path | |
 |---|---|
-| `src/lib.rs` | the embedded grammar, the document adjustments, `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION` |
+| `src/lib.rs` | the embedded grammar, the document adjustments, `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION`, and the translation parts `manifest_text` and `render_text`, `include_str!` of the copies in `translate/` |
 | `src/refs.rs` | every `@`-named reference the grammar uses: state actions, alternate actions, conditions, conditional `p:`/`r:` targets |
 | `src/node.rs` | table nodes as PATHS (see below), and the key-conflict diagnosis |
 | `src/strmatcher.rs` | TOML's basic, literal and multi-line strings |
 | `src/datematcher.rs` | the context-aware date and time matchers, and the leading-BOM matcher |
 | `src/daterange.rs` | whether a date or time whose SHAPE matched denotes a real instant |
 | `src/values.rs` | `TomlTime`, and how it rides on a `tabnas::Value` |
+| `translate/` | the crate's copies of `../tabnas.plugin.json` (as `manifest.json`) and `../alchemy/render.alc`, which a packaged crate needs; `tests/translate_test.rs` holds them to the files |
 | `tests/parity_test.rs` | every `../test/spec/*.tsv` fixture, discovered by listing |
 | `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns, key conflicts, the canonical message templates, the embedded grammar, threads |
 | `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
+| `tests/translate_test.rs` | the translation parts: the render the embedded manifest names is the one `render_text()` embeds, the manifest's shapes and loss lines, and every render definition named `toml-...` |
 | `tests/perf_test.rs` | `parse` reuses its instance |
 | `tests/version_test.rs` | Cargo.toml == `VERSION` == ts/package.json |
 | `tests/common/mod.rs` | shared helpers: spec dir, repo dir, value and failure conversion |

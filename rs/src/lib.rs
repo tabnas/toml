@@ -560,3 +560,32 @@ pub fn parse(src: &str) -> Result<Value, TomlError> {
 pub fn grammar_text() -> &'static str {
     GRAMMAR_TEXT
 }
+
+/// The plugin's manifest, `tabnas.plugin.json`, as the repository carries
+/// it. Its `translate` object is what a host that translates reads: the
+/// shape TOML is read as and written from (`tree`), the file that holds
+/// the render, and the sentences that say what the render does not keep.
+/// The crate embeds its own copy, `translate/manifest.json`, since a
+/// packaged crate holds nothing outside `rs/`; `tests/translate_test.rs`
+/// holds the copy to the file.
+///
+/// ```
+/// assert!(tabnas_toml::manifest_text().contains("\"translate\""));
+/// ```
+pub fn manifest_text() -> &'static str {
+    include_str!("../translate/manifest.json")
+}
+
+/// TOML's render, `alchemy/render.alc`, the file the manifest's
+/// `translate.render` names: a library of alchemy definitions, with no
+/// `export`, whose entry point `toml-render` writes a tree's events as one
+/// TOML document. A host links it with its own program. The crate embeds
+/// its own copy, `translate/render.alc`, held to the file as the
+/// manifest's is.
+///
+/// ```
+/// assert!(tabnas_toml::render_text().contains("def toml-render [input]"));
+/// ```
+pub fn render_text() -> &'static str {
+    include_str!("../translate/render.alc")
+}
