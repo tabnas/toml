@@ -1,0 +1,39 @@
+input	expected
+# KEY CONFLICTS. TOML does not allow a key to be redefined, and every
+# runtime refuses one with toml_key_conflict. The values a runtime WOULD
+# have built are the reason the code exists: before the check, a value
+# redefined as a table was overwritten by an empty table, and an array of
+# tables redefined as a table lost either the array or the table,
+# depending on the port -- silent data loss on an invalid document, and
+# nothing reported it. Go accepted every row below until 2026-10; its
+# engine now passes a coded error raised inside a grammar action through
+# with the code intact, so the check reaches the reader there too.
+#
+# A value used again as a table: through a header, a dotted header, and a
+# dotted key in an inline table.
+a = 1\n[a]\nb = 2	ERROR:toml_key_conflict
+a = 1\n[a.b]\nc = 2	ERROR:toml_key_conflict
+[a]\nb = 1\n[a.b]\nc = 2	ERROR:toml_key_conflict
+[t]\na = 1\n[t]\n[t.a]\nb = 2	ERROR:toml_key_conflict
+a = {b = 1, b.c = 2}	ERROR:toml_key_conflict
+a = {b = "s", b.c = 2}	ERROR:toml_key_conflict
+# A value used again as a table-array header.
+a = 1\n[[a]]\nb = 2	ERROR:toml_key_conflict
+[a]\nb = 1\n[[a.b]]\nc = 2	ERROR:toml_key_conflict
+[[a]]\nb = 1\n[[a.b]]\nc = 2	ERROR:toml_key_conflict
+# A table redefined as an array of tables, and an array of tables redefined
+# as a table (corpus: array/tables-02, table/duplicate-key-07).
+[a]\n[[a]]	ERROR:toml_key_conflict
+[[x]]\na = 1\n[x]\nb = 2	ERROR:toml_key_conflict
+[x]\n[[x.y]]\n[[x.y]]\n[x.y]	ERROR:toml_key_conflict
+# CONTROLS. Descending into an existing table, into the implicit table a
+# dotted key or a deeper header created, or into the last element of an
+# existing array of tables is legitimate; four valid corpus documents do
+# exactly this, and a first cut of the check rejected all four.
+a = {b = 1, c = 2}	{"a":{"b":1,"c":2}}
+a = {b.c = 1, b.d = 2}	{"a":{"b":{"c":1,"d":2}}}
+a.b = 1\n[a]\nc = 2	{"a":{"b":1,"c":2}}
+[a.b]\nc = 1\n[a]\nd = 2	{"a":{"b":{"c":1},"d":2}}
+[a]\nb.c = 1\n[a.b]\nd = 2	{"a":{"b":{"c":1,"d":2}}}
+[[x]]\ny = 1\n[x.z]\nw = 2	{"x":[{"y":1,"z":{"w":2}}]}
+[[a]]\n[[a]]\n[a.b]\nc = 1	{"a":[{},{"b":{"c":1}}]}

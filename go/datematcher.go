@@ -103,22 +103,6 @@ func registerDateMatchers(j *jsonic.Jsonic) {
 		idTin, localtimeRe, localtimeVal, localtimeInRange)
 
 	j.SetOptions(jsonic.Options{
-		// A code with no template renders as "unknown error:
-		// invalid_datetime", which tells the author nothing. Kept
-		// character-for-character in step with the TS port's registration in
-		// ts/src/toml.ts, so a document rejected by both ports is rejected
-		// with the same words.
-		Error: map[string]string{
-			"invalid_datetime": "date or time is out of range",
-		},
-		Hint: map[string]string{
-			"invalid_datetime": `
-The value has the shape of a date or time, but one of its components is out
-of range: month 1-12, day 1 to the length of that month, hour 0-23, minute
-and second 0-59 (a second may be 60, for a leap second), and the same limits
-again for a +hh:mm offset. February is checked against the actual year, so
-2100-02-29 is rejected - 2100 is not a leap year.`,
-		},
 		Lex: &jsonic.LexOptions{
 			Match: map[string]*jsonic.MatchSpec{
 				"tomlisodate": {

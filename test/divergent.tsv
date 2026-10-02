@@ -105,3 +105,19 @@ a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@
 #
 # MEASURED 2026-09-22 in all three ports.
 a = "\\u12g4"	{"a":"\u0012"}	ERROR:invalid_unicode@1:5	{"a":"\u0012"}	lax hexadecimal scan: Go is right, TS and Rust move
+#
+# --- The POSITION of a key conflict --------------------------------------
+# All three ports refuse a redefined key with toml_key_conflict (the shared
+# rows are spec/key-conflict.tsv), and only where they point differs. Go and
+# Rust point at the key being redefined, `a` in `[a]` on line 2. TypeScript
+# answers 1:1: the plugin raises on `ctx.t0`, and its engine has moved the
+# matched tokens into the rewind history and emptied the slot by the time an
+# alternate's action runs (tabnas/parser ts/src/rules.ts, the consumed-token
+# shift before `alt.a`), so the error is built from the NOTOKEN sentinel.
+# TYPESCRIPT IS THE REPAIR TARGET: the two ports that name the line the
+# reader has to look at are right, and the repair is in ts/src/toml.ts
+# (raise on the matched key token, `r.o0`) or in the engine. Not a code
+# divergence, so no spec row is affected.
+#
+# MEASURED 2026-10-02 in all three ports.
+a = 1\n[a]\nb = 2	ERROR:toml_key_conflict@1:1	ERROR:toml_key_conflict@2:2	ERROR:toml_key_conflict@2:2	position of a key conflict: TS reports 1:1, TS moves

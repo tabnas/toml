@@ -397,13 +397,12 @@ describe('toml', () => {
   // internal crash"), and says turning a crash into a diagnosis is the point.
   // It is what raised the diagnosed count in test/conformance.tsv.
   //
-  // TS-LOCAL rather than a shared .tsv row, on purpose. The Go port still
-  // ACCEPTS these documents and cannot yet reject them with this code: its
-  // engine converts every action panic into an `internal` error by design
-  // (parser/go/parser.go, "parsing never panics, whatever the input"), so the
-  // check has to move into a grammar CONDITION before the two ports can share
-  // a row. Named in the PR as follow-up; pinning a row both ports cannot pass
-  // would just be a red build.
+  // The shared rows are test/spec/key-conflict.tsv, which every runtime
+  // runs; this test keeps the MESSAGE, which a fixture row cannot pin. The
+  // rows used to be TS-local because the Go port accepted every one of
+  // these documents: its engine converted every action panic into an
+  // `internal` error. It now passes a coded error through
+  // (parser/go/parser.go, startParse), and the Go port raises this code.
   test('key-conflict-is-diagnosed', () => {
     const toml = new Tabnas().use(jsonic).use(Toml)
     const norm = (v: any) => JSON.parse(JSON.stringify(v))

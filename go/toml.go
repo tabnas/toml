@@ -294,6 +294,10 @@ func apply(j *jsonic.Jsonic) error {
 	// forms, which the default Jsonic string matcher doesn't.
 	registerTomlStringMatcher(j)
 
+	// Declare the two codes this plugin raises, with the words the
+	// TypeScript port uses for them.
+	registerErrorMessages(j)
+
 	// Install context-aware date/time matchers so that date-shaped bare
 	// keys (`2001-02-03 = 1`, `[2002-01-02]`, `a.2001-02-08 = 7`) fall
 	// through to #ID lexing instead of being swallowed by the grammar's
@@ -485,4 +489,35 @@ func stripUnsupported(gsMap map[string]any) {
 			def["hash"] = map[string]any{"line": true, "start": "#"}
 		}
 	}
+}
+
+// registerErrorMessages declares the error and hint templates for the two
+// codes this plugin raises itself, `toml_key_conflict` (refs.go,
+// keyConflict) and `invalid_datetime` (datematcher.go). A code with no
+// template renders as "unknown error: toml_key_conflict", which tells the
+// author nothing. Kept character-for-character in step with the TS port's
+// registration in ts/src/toml.ts and the Rust port's in rs/src/lib.rs, so
+// a document rejected by two ports is rejected in the same words. Every
+// other code this port raises is inherited from the engine and from
+// jsonic, and is not redeclared here.
+func registerErrorMessages(j *jsonic.Jsonic) {
+	j.SetOptions(jsonic.Options{
+		Error: map[string]string{
+			"toml_key_conflict": "cannot define {key}, {why}",
+			"invalid_datetime":  "date or time is out of range",
+		},
+		Hint: map[string]string{
+			"toml_key_conflict": `
+TOML does not allow a key to be redefined, and a key that already holds a
+value is not a table you can add to. This usually means the same name was
+used twice - as a value and then as a table or table-array header, or twice
+inside one inline table.`,
+			"invalid_datetime": `
+The value has the shape of a date or time, but one of its components is out
+of range: month 1-12, day 1 to the length of that month, hour 0-23, minute
+and second 0-59 (a second may be 60, for a leap second), and the same limits
+again for a +hh:mm offset. February is checked against the actual year, so
+2100-02-29 is rejected - 2100 is not a leap year.`,
+		},
+	})
 }

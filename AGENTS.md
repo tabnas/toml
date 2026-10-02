@@ -758,15 +758,22 @@ word, so a document rejected by two ports is rejected in the same words:
 
 | code | raised by | raised when |
 |---|---|---|
-| `toml_key_conflict` | TS, Rust | a key TOML does not allow to be redefined: a value used again as a table or table-array header, an array of tables redefined as a table, or the same name twice in one inline table. |
+| `toml_key_conflict` | TS, Go, Rust | a key TOML does not allow to be redefined: a value used again as a table or table-array header, an array of tables redefined as a table, or the same name twice in one inline table. |
 | `invalid_datetime` | TS, Go, Rust | a value whose SHAPE is a date or time but whose components cannot denote a real instant. |
 
-Go does not raise `toml_key_conflict`, and its engine is why: it turns
-every panic inside a grammar action into an `internal` error by design,
-so the check would be an internal crash wearing a diagnosis. That is the
-nine-document gap `test/conformance.tsv` records. Rust needs no panic,
-because a grammar action there answers with an error value, which is how
-the Rust row reaches the TypeScript numbers.
+Each port raises `toml_key_conflict` in the way its engine lets a grammar
+action refuse: TypeScript throws a `JsonicError`, Rust answers with an
+`ActionError` value, and Go panics with a `*JsonicError` (`keyConflict` in
+`go/refs.go`), which the Go engine passes through with its code intact
+(`startParse` in tabnas/parser `go/parser.go`); any other panic inside an
+action still becomes `internal`. This file used to say the Go engine made
+the check unreachable, which was true of an older engine and is the
+nineteen-document gap `test/conformance.tsv` records closing. The check
+itself lives in `tableAt` and `arrayAt`, one per port, and the shared rows
+are `test/spec/key-conflict.tsv`. One difference remains and is in the
+register: TypeScript reports the error at `1:1`, because it raises on
+`ctx.t0`, which its engine has emptied by the time an action runs, while Go
+and Rust point at the key being redefined.
 
 Everything else it *raises* is inherited from the engine and from
 `@tabnas/jsonic`: `unexpected`, and the string matcher's `unprintable`,
@@ -782,10 +789,11 @@ the shared runner's default, which does the same.
 
 The machine-readable list is [`tabnas.plugin.json`](tabnas.plugin.json)
 (`errorCodes`). It is still `[]` and therefore LAGS the two codes above,
-which were added to `ts/src/toml.ts` without it; `invalid_datetime` is in
-Go too, `toml_key_conflict` is not, for the reason above. Filling it in means deciding whether the
-list means "declared by every runtime" or "declared by any", which is why
-it is written down here rather than guessed at. When a toml-specific code
+which were added to `ts/src/toml.ts` without it; both are now declared in
+every runtime (`registerErrorMessages` in `go/toml.go` is the Go
+catalogue). Filling it in means deciding whether the list means "declared
+by every runtime" or "declared by any", which is why it is written down
+here rather than guessed at. When a toml-specific code
 is added, declare it in EVERY runtime that can raise it, add it to that
 list, and pin it with an `ERROR:<code>` fixture row: the code is the
 contract, and two runtimes that reject the same input with different
