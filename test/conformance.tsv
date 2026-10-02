@@ -103,10 +103,12 @@ runtime	total	rejected	diagnosed	crashes
 #
 # The shared polyglot-ci workflow clones each tabnas dependency and wires a
 # `go work use` / npm symlink over it, so these suites run against parser's
-# `main` — NOT the `v0.8.10` that go/go.mod and ts/package.json pin. Measuring
-# against the published pin gives go=234 and is not what the gate sees. Use
-# admin/scripts/link.sh (or a go.work over the siblings) before re-measuring,
-# or the number you write down will be for a build nothing runs.
+# `main` — NOT the release that go/go.mod and ts/package.json pin. A number
+# taken against the published pin is for a build the gate never runs, on
+# the days the two builds agree (2026-10-02, below) as on the days they do
+# not (while the pin was v0.8.10, it gave go=234). Use admin/scripts/link.sh
+# (or a go.work over the siblings) before re-measuring, and write down what
+# the numbers were measured against.
 #
 # THE rust ROW REPRODUCES THE ts ROW, WHICH IS THE POINT
 #
@@ -122,10 +124,17 @@ runtime	total	rejected	diagnosed	crashes
 # out, because a Go string holds arbitrary bytes. All three rows count the
 # same outcome for those documents either way.
 #
-# MEASURED 2026-08-19 against BurntSushi/toml-test @ 9eef1b9;
-# go re-measured 2026-08-20 against the sibling checkouts, and again
-# 2026-10-02 against the published engine v0.12.7 the module pins;
-# rust measured 2026-09-21 against the same pinned corpus.
+# MEASURED 2026-08-19 against BurntSushi/toml-test @ 9eef1b9; go re-measured
+# 2026-08-20 against the sibling checkouts; rust measured 2026-09-21.
+#
+# RE-MEASURED 2026-10-02 IN EVERY RUNTIME against the sibling checkouts at
+# main, wired as CI wires them (a go.work over the six modules, the npm
+# symlinks): parser 0e48785, jsonic fc0edf0, json 7e893b8, support 67ba2c9,
+# debug 0bdcc3e. ts 278/278/0, go 280/280/0, rust 278/278/0: the three rows
+# below. The published pins go/go.mod names (parser v0.12.7, jsonic v0.7.2,
+# json v0.5.11, support v0.3.5; `GOWORK=off go test`) give go the same
+# 280/280/0 today, so the two builds agree; the sibling figures are the
+# ones recorded.
 ts	509	278	278	0
 go	509	280	280	0
 rust	509	278	278	0
