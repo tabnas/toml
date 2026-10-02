@@ -1,0 +1,52 @@
+{
+  "$schema": "https://tabnas.dev/schema/plugin.schema.json",
+  "name": "@tabnas/toml",
+  "go": "github.com/tabnas/toml/go",
+  "description": "TOML parsing for the tabnas engine.",
+  "base": "@tabnas/jsonic",
+  "engine": "@tabnas/parser",
+  "grammar": "toml-grammar.jsonic",
+  "extensions": [
+    ".toml"
+  ],
+  "mediaTypes": [
+    "application/toml"
+  ],
+  "languageId": "toml",
+  "pluginKind": "grammar",
+  "grammarKind": "closure",
+  "lexStream": "clean",
+  "syncGroups": [
+    "end",
+    "comma",
+    "close"
+  ],
+  "specDir": "test/spec",
+  "clib": {
+    "dir": "go/clib",
+    "library": "libtabnastoml",
+    "abi": "v1",
+    "errorCodes": [
+      "usage",
+      "grammar",
+      "handle",
+      "internal"
+    ]
+  },
+  "errorCodes": [],
+  "docs": "https://tabnas.dev/docs/packages",
+  "repository": "https://github.com/tabnas/toml",
+  "versionSource": "ts/package.json",
+  "translate": {
+    "reads": "tree",
+    "writes": "tree",
+    "render": "alchemy/render.alc",
+    "loss": [
+      "Comments are not kept.",
+      "Every key is written as a quoted key, and every table under a key as an inline table on that key's line.",
+      "Every string is written as a basic string on one line, its line breaks escaped; a literal or multi-line string is not kept as one.",
+      "A date or time is written as a string, since the reader builds one as text.",
+      "A number is written as JSON writes its value, not as the document spelled it: a hexadecimal, octal or binary integer, an underscore and an exponent are not kept, and a whole float such as 1.0 is written as an integer."
+    ]
+  }
+}

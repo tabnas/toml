@@ -993,3 +993,6 @@ const VERSION = '0.5.9'
 export { Toml, VERSION }
 
 export type { TomlOptions }
+
+export { translate } from './translate'
+export type { TranslationPart, TranslationParts } from './translate'
