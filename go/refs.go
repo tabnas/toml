@@ -152,15 +152,19 @@ func makeRefs() map[jsonic.FuncRef]any {
 
 		"@table-key-cs-tail": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
 			key := tokenString(r.O0)
+			var prev *jsonic.OrderedMap
 			if _, ok := r.Prev.Node.([]any); ok {
+				// The segment before this one descended through an array
+				// of tables; the key is defined in its LAST table, as a
+				// table for `[a.b.c]` and as an array of tables for
+				// `[[a.b.c]]`.
 				owner, arrKey, arr := arrayHome(r.Prev)
 				last, arr := lastTable(arr, owner, arrKey)
 				r.Prev.Node = arr
-				land(r, tableAt(last, key, ctx, DEFINE), last, key)
-				return
-			}
-			prev, ok := asMap(r.Prev.Node)
-			if !ok {
+				prev = last
+			} else if m, ok := asMap(r.Prev.Node); ok {
+				prev = m
+			} else {
 				return
 			}
 			if r.N["table_array"] > 0 {

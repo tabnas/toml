@@ -37,3 +37,18 @@ a.b = 1\n[a]\nc = 2	{"a":{"b":1,"c":2}}
 [a]\nb.c = 1\n[a.b]\nd = 2	{"a":{"b":{"c":1,"d":2}}}
 [[x]]\ny = 1\n[x.z]\nw = 2	{"x":[{"y":1,"z":{"w":2}}]}
 [[a]]\n[[a]]\n[a.b]\nc = 1	{"a":[{},{"b":{"c":1}}]}
+# NESTED ARRAYS OF TABLES. A `[[...]]` header whose dotted prefix passes
+# through an array of tables belongs to that array's LAST table, and the
+# segment after the prefix is an array of tables of its own: `[[a.b]]` then
+# `[[a.b.c]]` is valid TOML, and `[[a.b.c]]` appends to the `c` of the last
+# `a.b`. Every port used to define a TABLE there instead, and then refuse it
+# as a key conflict when the new element was pushed, so a valid document was
+# rejected, while a `[...]` header through the same prefix was fine. The
+# conflicts a nested header CAN raise are the ones above: a table or a value
+# already under its last segment.
+[[a.b]]\n[[a.b.c]]	{"a":{"b":[{"c":[{}]}]}}
+[[a]]\n[[a.b]]\n[[a.b.c]]	{"a":[{"b":[{"c":[{}]}]}]}
+[[a]]\n[a.b]\n[[a]]\n[a.b]	{"a":[{"b":{}},{"b":{}}]}
+[[a.b]]\n[a.b.c]\n[[a.b.c]]	ERROR:toml_key_conflict
+[[a.b]]\n[[a.b.c]]\n[a.b.c]	ERROR:toml_key_conflict
+[[a.b]]\nc = 1\n[[a.b.c]]	ERROR:toml_key_conflict

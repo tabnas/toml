@@ -513,16 +513,22 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
 
     '@table-key-cs-tail': (r: any, ctx: any) => {
       let key = r.o0.val
-      if (Array.isArray(r.prev.node)) {
-        let arr = r.prev.node
+      let container = r.prev.node
+      if (Array.isArray(container)) {
+        // The segment before this one descended through an array of
+        // tables, so the key is defined in its LAST table: as a table for
+        // `[a.b.c]`, and as an array of tables for `[[a.b.c]]`, which is
+        // how a `[[...]]` nests under a `[[...]]` with a dotted prefix.
+        // This arm used to define a table whichever kind of header it was,
+        // and @table-cs-push then refused that table as a key conflict, so
+        // `[[a.b]]` followed by `[[a.b.c]]`, valid TOML, was rejected.
+        let arr = container
         let last = arr[arr.length - 1]
-        last = last ? last : (arr.push(node()), arr[arr.length - 1])
-        r.node = tableAt(last, key, r, ctx, DEFINE)
-      } else {
-        r.node = r.n.table_array
-          ? arrayAt(r.prev.node, key, r, ctx)
-          : tableAt(r.prev.node, key, r, ctx, DEFINE)
+        container = last ? last : (arr.push(node()), arr[arr.length - 1])
       }
+      r.node = r.n.table_array
+        ? arrayAt(container, key, r, ctx)
+        : tableAt(container, key, r, ctx, DEFINE)
     },
 
     '@table-cs-push': (r: any, ctx: any) => {
