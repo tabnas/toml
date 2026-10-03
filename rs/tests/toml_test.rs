@@ -380,6 +380,72 @@ fn string_tokens_carry_their_source_and_end_on_the_row_they_end_on() {
     }
 }
 
+/// Columns after a multi-line string that ends with extra quotes. Up to
+/// two quotes after the closing delimiter belong to the value, so
+/// `"""x""""` is `x"`, and each is a column of the source too. The
+/// TypeScript and Go matchers own their column arithmetic and consumed
+/// those quotes without counting their columns, so everything after such
+/// a string was placed one column early per extra quote there. This port
+/// counts the token's characters and was right; the test keeps it so. The
+/// register row `a = '''x''''''''''''''`, 1:18 in the other two ports
+/// against 1:22 here, was that defect and not the engine's lookahead, and
+/// it closed with it. Both other ports assert the same positions and
+/// traces.
+#[test]
+fn columns_after_a_multi_line_string_count_its_extra_quotes() {
+    for (label, src, row, col) in [
+        // Control: no extra quote.
+        ("none", "a = \"\"\"x\"\"\" ]", 1, 13),
+        ("one", "a = \"\"\"x\"\"\"\" ]", 1, 14),
+        ("two", "a = \"\"\"x\"\"\"\"\" ]", 1, 15),
+        ("literal, one", "a = '''x'''' ]", 1, 14),
+        ("literal, two", "a = '''x''''' ]", 1, 15),
+    ] {
+        let error = parse(src)
+            .err()
+            .unwrap_or_else(|| panic!("{label}: {src:?} parsed, expected a diagnostic"));
+        assert_eq!(
+            (error.row, error.col),
+            (row, col),
+            "{label}: {src:?} row:col"
+        );
+    }
+
+    let trace = |src: &str| {
+        let mut parser = make();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        parser.subscribe_lex(move |token, _rule, _context| {
+            let name = token.name.as_str();
+            if "#ST" == name || "#ID" == name {
+                sink.lock().expect("the trace is whole").push(format!(
+                    "{name}{:?}@{}:{}",
+                    token.src.as_str(),
+                    token.site.ri,
+                    token.site.ci
+                ));
+            }
+        });
+        parser
+            .parse(src)
+            .unwrap_or_else(|error| panic!("{src:?}: {error}"));
+        let traced = seen.lock().expect("the trace is whole").join(" ");
+        traced
+    };
+    for (src, want) in [
+        (
+            "a = \"\"\"x\"\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"x\"\"\"\""@1:13 #ID"b"@2:1"#,
+        ),
+        (
+            "a = '''x'''''\nb = 1",
+            r#"#ID"a"@1:1 #ST"'''x'''''"@1:14 #ID"b"@2:1"#,
+        ),
+    ] {
+        assert_eq!(trace(src), want, "{src:?}");
+    }
+}
+
 // --- key names that are not special -------------------------------------
 
 /// `__proto__` is an ordinary key. It is inert in Rust, where a map has

@@ -781,14 +781,18 @@ function makeTomlStringMatcher() {
             cI += 2
             sI += 2
 
+            // Up to two further delimiters belong to the value, and each is
+            // a column of the source as well as a character of the value.
             if (delimiter === src[sI + 1]) {
               value += delimiter
               sI++
+              cI++
             }
 
             if (delimiter === src[sI + 1]) {
               value += delimiter
               sI++
+              cI++
             }
           }
 

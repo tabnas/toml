@@ -302,39 +302,6 @@ comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,
 delete the local comparator in all three halves together.
 
-## The open divergence is an ENGINE repair, not a grammar one
-
-One row of `../test/divergent.tsv` carries the `rust` column away from
-the other two ports, and nothing in this crate can close it.
-
-When an alternate needs two tokens and the SECOND one is the lexer's bad
-token, the Rust engine once built its "no alternate matched" error from
-the first lookahead token alone (`deferred_error_code(t0)` in
-`tabnas/parser` `rs/src/parser.rs`), so a bad token at any slot past the
-first lost its code, and this port answered `unexpected` at the first
-token where TypeScript and Go raised the token's own diagnosis.
-tabnas/parser#274 repaired that in the engine: it now keeps the bad token
-it met while scanning the slots and raises its code, as the canonical
-does (`ts/src/rules.ts`, the deferred bad-token throw). The string
-matcher was never the cause: instrumented, it cuts exactly the same
-tokens in all three ports, including the second `#ST` the remaining row
-re-lexes out of the leftover apostrophes.
-
-What remains is one position:
-
-| input | ts, go | rust |
-|---|---|---|
-| `a = '''x''''''''''''''` | `unterminated_string@1:18` | `unterminated_string@1:22` |
-
-`["abc` and `["tbl<newline>"]`, which once answered `unexpected@1:1`
-here, now answer the canonical `unterminated_string@1:2` and
-`unprintable@1:2`, and their rows are gone. The repair for the position,
-if one is wanted, is the engine's as well: this plugin sees the token
-after the engine has chosen what to report. Six documents of the
-BurntSushi corpus were in this class; all six are rejected either way,
-so the `rust` row of `../test/conformance.tsv` is unaffected and the
-register is the only thing holding the difference.
-
 ## The conformance suite never skips
 
 `tests/toml_valid_test.rs` runs `../scripts/fetch-toml-test.sh` itself

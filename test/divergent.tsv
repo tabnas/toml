@@ -54,34 +54,6 @@ input	ts	go	rust	why
 ["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
 ["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent
 #
-# --- A bad token reached in LOOKAHEAD: the position the reader is given ---
-# When an alternate needs two tokens and the SECOND one is the lexer's bad
-# token, the Rust engine once built the "no alternate matched" error from
-# the first lookahead token alone (`deferred_error_code(t0)` in
-# tabnas/parser rs/src/parser.rs), so a bad token in a later slot lost its
-# code: TypeScript's and Go's `unterminated_string` or `unprintable` was
-# `unexpected` at the first token in Rust. tabnas/parser#274 repaired that
-# in the engine, which now raises the bad token with its own code, as the
-# canonical does (tabnas/parser ts/src/rules.ts, the deferred bad-token
-# throw). The two rows that pinned the CODE, `["abc` and `["tbl\n"]`, are
-# closed and gone: all three ports answer the canonical code at 1:2.
-#
-# What remains is one POSITION. A run of apostrophes long enough that the
-# leftovers of one string re-lex into another, whose failure only the
-# lookahead sees: TypeScript and Go name 1:18, Rust 1:22, with the same
-# code. Both other ports agree on the code AND the position, so the row
-# pins both. The repair, if one is wanted, is an ENGINE repair in
-# tabnas/parser's Rust port, not a grammar one: this plugin sees the token
-# after the engine has chosen what to report. The six documents of the
-# BurntSushi corpus that landed in this group are rejected by every port,
-# so the `rust` row of ../test/conformance.tsv reproduces the `ts` counts
-# throughout.
-#
-# MEASURED 2026-10-03 in all three ports against the sibling checkouts
-# (tabnas/parser main e0a5e3f, which carries #274); first measured
-# 2026-09-22, when the three rows differed in code.
-a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:22	bad token in lookahead, the position alone: engine repair in tabnas/parser rs
-#
 # --- A string escape where the three ports are not unanimous -------------
 # `\u12g4` is a lax hexadecimal scan. The canonical `isHexadecimal`
 # accepts every ASCII letter and `parseInt` then reads the longest hex

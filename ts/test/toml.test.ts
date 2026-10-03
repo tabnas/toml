@@ -582,6 +582,62 @@ describe('toml', () => {
     equal(trace("a = ''\nb = 1"), raw`#ID"a"@1:1 #ST"''"@1:7 #ID"b"@2:1`)
     equal(trace('"" = 1'), raw`#ST"\"\""@1:3`)
   })
+
+  // Columns after a multi-line string that ends with extra quotes. Up to
+  // two quotes after the closing delimiter belong to the value, so
+  // `"""x""""` is `x"`, and each is a column of the source too. This
+  // matcher consumed them without counting their columns, so everything
+  // after such a string was placed one column early per extra quote. Rust
+  // counts the token's characters and was right. The register row
+  // `a = '''x''''''''''''''`, 1:18 here and in Go against 1:22 in Rust, was
+  // this defect and not the engine's lookahead, and it closed with it.
+  // go/strmatcher_quotes_test.go
+  // and columns_after_a_multi_line_string_count_its_extra_quotes in
+  // rs/tests/toml_test.rs assert the same positions and traces.
+  test('columns after a multi-line string count its extra quotes', () => {
+    const cases: [string, string, number, number][] = [
+      // Control: no extra quote.
+      ['none', 'a = """x""" ]', 1, 13],
+      ['one', 'a = """x"""" ]', 1, 14],
+      ['two', 'a = """x""""" ]', 1, 15],
+      ['literal, one', "a = '''x'''' ]", 1, 14],
+      ['literal, two', "a = '''x''''' ]", 1, 15],
+    ]
+
+    for (const [label, src, row, col] of cases) {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      let err: any = null
+      try {
+        t.parse(src)
+      }
+      catch (e) {
+        err = e
+      }
+      ok(null != err, `${label}: ${JSON.stringify(src)} parsed, expected a diagnostic`)
+      const diag = JSON.parse(JSON.stringify(err))
+      equal([diag.row, diag.col], [row, col],
+        `${label}: ${JSON.stringify(src)} row:col`)
+    }
+
+    const trace = (src: string) => {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      const seen: string[] = []
+      t.sub({
+        lex: (tkn: any) => {
+          if ('#ST' === tkn.name || '#ID' === tkn.name) {
+            seen.push(`${tkn.name}${JSON.stringify(tkn.src)}@${tkn.rI}:${tkn.cI}`)
+          }
+        },
+      })
+      t.parse(src)
+      return seen.join(' ')
+    }
+    const raw = String.raw
+    equal(trace('a = """x""""\nb = 1'),
+      raw`#ID"a"@1:1 #ST"\"\"\"x\"\"\"\""@1:13 #ID"b"@2:1`)
+    equal(trace("a = '''x'''''\nb = 1"),
+      raw`#ID"a"@1:1 #ST"'''x'''''"@1:14 #ID"b"@2:1`)
+  })
 })
 
 

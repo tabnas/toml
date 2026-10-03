@@ -131,14 +131,17 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 					// Closing """.
 					sI += 2
 					cI += 2
-					// Optionally consume up to two trailing delimiters.
+					// Optionally consume up to two trailing delimiters. Each
+					// belongs to the value and is a column of the source.
 					if sI+1 < srcLen && src[sI+1] == delim {
 						b.WriteByte(delim)
 						sI++
+						cI++
 					}
 					if sI+1 < srcLen && src[sI+1] == delim {
 						b.WriteByte(delim)
 						sI++
+						cI++
 					}
 				}
 				sI++
