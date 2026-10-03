@@ -89,13 +89,24 @@ invalid TOML -- the format requires exactly four hexadecimal digits --
 so Go is the only one of the three that is right, and the two that move
 are TypeScript and Rust.
 
-The last row is the **position of a key conflict**. All three ports
+One row is the **position of a key conflict**. All three ports
 refuse a redefined key with `toml_key_conflict` -- the shared rows are
 `spec/key-conflict.tsv` -- and Go and Rust point at the key being
 redefined, while TypeScript answers `1:1`, because it raises on `ctx.t0`
 after its engine has emptied that slot for the action. **TypeScript is the
 repair target**: the repair is in `ts/src/toml.ts` (raise on the matched
 key token) or in the engine, and the row goes when it lands.
+
+The last two rows are the **depth guard**, and they are permanent like the
+astral rows: the Rust port refuses a document nested past 127 levels with
+the engine's `cancel`, through a parse guard of its own that counts every
+container the value sits in -- the inline tables and arrays jsonic's guard
+counted, and the tables a dotted key or a header nests through, which it
+never saw (tabnas/toml#78) -- where TypeScript and Go parse it. The `ts`
+and `go` cells hold the 128-level value, which is why those two rows are
+long. The exact boundaries are pinned in `rs/tests/toml_test.rs`; the rows
+are the shared record that the other two ports do not refuse them. Do not
+delete them on a sweep.
 
 One difference that belongs in the register cannot be written into it. A
 lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds

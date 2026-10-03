@@ -54,34 +54,33 @@ input	ts	go	rust	why
 ["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
 ["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent
 #
-# --- A bad token reached in LOOKAHEAD: the code the reader is given ------
+# --- A bad token reached in LOOKAHEAD: the position the reader is given ---
 # When an alternate needs two tokens and the SECOND one is the lexer's bad
-# token, TypeScript and Go raise that token's own diagnosis
-# (unterminated_string, unprintable), and Rust answers `unexpected` at the
-# first token instead. The Rust engine builds the "no alternate matched"
-# error from the first lookahead token alone
-# (tabnas/parser rs/src/parser.rs, `deferred_error_code(t0)`), so a bad
-# token in any later slot loses its code; the canonical engine remembers it
-# and throws it once every alternate has declined
-# (tabnas/parser ts/src/rules.ts, the deferred bad-token throw).
+# token, the Rust engine once built the "no alternate matched" error from
+# the first lookahead token alone (`deferred_error_code(t0)` in
+# tabnas/parser rs/src/parser.rs), so a bad token in a later slot lost its
+# code: TypeScript's and Go's `unterminated_string` or `unprintable` was
+# `unexpected` at the first token in Rust. tabnas/parser#274 repaired that
+# in the engine, which now raises the bad token with its own code, as the
+# canonical does (tabnas/parser ts/src/rules.ts, the deferred bad-token
+# throw). The two rows that pinned the CODE, `["abc` and `["tbl\n"]`, are
+# closed and gone: all three ports answer the canonical code at 1:2.
 #
-# Both other ports agree on the code AND the position, so these rows pin
-# both. The repair is an ENGINE repair in tabnas/parser's Rust port, not a
-# grammar one: this plugin sees the token after the engine has chosen what
-# to report. Six documents of the BurntSushi corpus land here, which is why
-# the `rust` row of ../test/conformance.tsv still reproduces the `ts` counts:
-# all six are rejected by every port, and only the code differs.
+# What remains is one POSITION. A run of apostrophes long enough that the
+# leftovers of one string re-lex into another, whose failure only the
+# lookahead sees: TypeScript and Go name 1:18, Rust 1:22, with the same
+# code. Both other ports agree on the code AND the position, so the row
+# pins both. The repair, if one is wanted, is an ENGINE repair in
+# tabnas/parser's Rust port, not a grammar one: this plugin sees the token
+# after the engine has chosen what to report. The six documents of the
+# BurntSushi corpus that landed in this group are rejected by every port,
+# so the `rust` row of ../test/conformance.tsv reproduces the `ts` counts
+# throughout.
 #
-# The first row is a quoted table-header key that never closes, the second a
-# raw newline inside one, and the third a value context: a run of
-# apostrophes long enough that the leftovers of one string re-lex into
-# another, whose failure only the lookahead sees.
-#
-# MEASURED 2026-09-22 in all three ports, against the sibling checkouts and
-# again against the published Go modules, which agree.
-["abc	ERROR:unterminated_string@1:2	ERROR:unterminated_string@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
-["tbl\n"]	ERROR:unprintable@1:2	ERROR:unprintable@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
-a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unexpected@1:22	bad token in lookahead: engine repair in tabnas/parser rs
+# MEASURED 2026-10-03 in all three ports against the sibling checkouts
+# (tabnas/parser main e0a5e3f, which carries #274); first measured
+# 2026-09-22, when the three rows differed in code.
+a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:22	bad token in lookahead, the position alone: engine repair in tabnas/parser rs
 #
 # --- A string escape where the three ports are not unanimous -------------
 # `\u12g4` is a lax hexadecimal scan. The canonical `isHexadecimal`
@@ -121,3 +120,33 @@ a = "\\u12g4"	{"a":"\u0012"}	ERROR:invalid_unicode@1:5	{"a":"\u0012"}	lax hexade
 #
 # MEASURED 2026-10-02 in all three ports.
 a = 1\n[a]\nb = 2	ERROR:toml_key_conflict@1:1	ERROR:toml_key_conflict@2:2	ERROR:toml_key_conflict@2:2	position of a key conflict: TS reports 1:1, TS moves
+#
+# --- Nesting past 127 levels: refused in Rust, PERMANENT ------------------
+# The Rust port refuses a document nested past 127 levels with the engine's
+# `cancel` code, through a parse guard of its own (rs/src/lib.rs,
+# DEPTH_LIMIT and DEPTH_GUARD), where TypeScript and Go parse it. The reason
+# is the Rust value: the engine parses iteratively, but displaying,
+# converting or dropping a `tabnas::Value` walks it with the call stack, so
+# an unbounded document ends the caller's process rather than returning an
+# error, and neither other runtime's value has that hazard. jsonic, JSON and
+# YAML draw the same line in their Rust ports, for the same reason, and all
+# three record it in prose rather than in a register: jsonic and YAML in
+# their DIVERGENCE.md, JSON in its crate README, and jsonic's says outright
+# that a test pins its bound "rather than by a register row". CSS records
+# its bound as a row of its register, as this file does. The number is
+# jsonic's, so an inline table and an array were bounded here already; a
+# dotted key and a header, which nest through this grammar's own rules, are
+# bounded with them since tabnas/toml#78 (a key of 10,000 segments used to
+# parse, at rule depth 10,002). A level is a container the value sits in,
+# the root table included: a dotted key of 128 segments nests 128 levels,
+# and so does a header of 127. The guard's exact boundaries, every kind of
+# nesting and a document that is wide rather than deep are pinned by
+# nesting_is_bounded_by_the_depth_guard in rs/tests/toml_test.rs, and a
+# dotted key inside an inline table, after a comma, a space or a newline, by
+# a_key_the_close_loop_takes_counts_from_the_keys_outside; these two rows
+# are the shared record that the other two ports do NOT refuse them. Do not
+# delete them on a sweep: nothing is going to close them.
+#
+# MEASURED 2026-10-03 in all three ports against the sibling checkouts.
+a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a = 1	{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	ERROR:cancel	depth guard: Rust refuses nesting past 127 levels, as jsonic does; permanent
+[a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a.a]\nx = 1	{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"x":1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"a":{"x":1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}	ERROR:cancel	depth guard: Rust refuses nesting past 127 levels, as jsonic does; permanent

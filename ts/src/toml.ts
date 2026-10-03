@@ -150,18 +150,21 @@ const grammarText = `
     { s: ['#CA' '#CS'] b: 1 g: comma }
   ]
 
+  # A dotted key is a replace loop, as a dotted header is: each segment
+  # ending in a dot re-enters dive in the same frame (r), so rule depth
+  # stays what one segment needs however long the key, and only the value
+  # nests. The loop at the close takes the next dotted key without
+  # returning to the pair, and begins it from the table that holds both.
   rule: dive: {
     open: [
       {
         s: ['#ST #NR #ID' '#DOT']
-        p: dive
-        n: { dive_key: 1 }
+        r: dive
         a: '@dive-key-dot'
       }
       {
         s: ['#ST #NR #ID' '#CL']
         p: val
-        n: { dive_key: 1 }
         u: { dive_end: true }
       }
     ]
@@ -170,8 +173,6 @@ const grammarText = `
         s: ['#ST #NR #ID' '#DOT']
         b: 2
         r: dive
-        c: '@lte-dive-key-1'
-        n: { dive_key: 0 }
       }
       {}
     ]
@@ -208,6 +209,14 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
     { key, why: `it already has the value ${JSON.stringify(existing)}` },
     ctx.t0, r, ctx)
 }
+
+// Whether this dive continues the dotted key the dive before it began: it
+// was reached by `r: dive` from a `key .` segment. A dive pushed by a pair
+// or a map begins a key, and so does one reached through the close loop
+// from a dive that ENDED a key (dive_end), which takes the next dotted key
+// without returning to the pair.
+const continuesKey = (r: any) =>
+  'dive' === r.prev.name && !r.prev.u.dive_end
 
 // Whether an existing array-of-tables is a legitimate thing to land on.
 //
@@ -551,15 +560,23 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       r.u.key = r.o0.val
     },
 
+    // A dotted key is a replace loop (tabnas/toml#78): each `key .`
+    // segment re-enters `dive` in the same frame, so rule depth stays what
+    // one segment needs however long the key. The first segment descends
+    // from the table the key is in, the parent's node; each later one from
+    // the table the segment before it reached, handed on as r.prev.node
+    // when the dive replaced itself, exactly as @table-dive-mid reads a
+    // header's. It used to push a dive per segment, so rule depth grew
+    // with the key: 10,002 for ten thousand segments.
     '@dive-key-dot': (r: any, ctx: any) => {
-      r.node = tableAt(r.parent.node, r.o0.val, r, ctx, DESCEND)
+      const from = continuesKey(r) ? r.prev.node : r.parent.node
+      r.node = tableAt(from, r.o0.val, r, ctx, DESCEND)
     },
 
     // Conditions.
     '@table-top-dive-cond': (r: any) => 1 === r.d && 'table' !== r.prev.name,
     '@lte-table-dive': (r: any) => r.lte('table_dive'),
     '@lte-table-array-1': (r: any) => r.lte('table_array', 1),
-    '@lte-dive-key-1': (r: any) => r.lte('dive_key', 1),
     '@lte-pk': (r: any) => r.lte('pk'),
     '@map-is-table-parent': (r: any) => 'table' === r.parent.name,
 
