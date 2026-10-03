@@ -68,17 +68,12 @@ here and three ports. Forced by the scan unit and recorded in
 `parser/DIVERGENCE.md`. Do not delete them on a sweep — nothing is going to
 close them.
 
-The next row is a **bad token reached in lookahead**, and it is open. When
-an alternate needs two tokens and the second is the lexer's bad token, the
-Rust engine used to build its "no alternate matched" error from the first
-lookahead token alone, so a bad token in a later slot lost its code.
-tabnas/parser#274 repaired that in the engine, which closed the two rows
-that pinned a code; what remains is one position, a run of apostrophes
-that TypeScript and Go report at `1:18` and Rust at `1:22`, with the same
-code. The repair, if one is wanted, is the engine's as well. Six documents
-of the BurntSushi corpus sat in this class, all of them rejected by every
-port either way, which is why the `rust` row of `conformance.tsv` still
-reproduces the `ts` counts.
+One row is a **bad token reached in lookahead**. The Rust engine repair now
+preserves the later bad token's code, which closed two former rows and the
+code difference in this one. Its reported position remains different for a
+literal-string value whose leftovers re-lex into another string: TypeScript
+and Go report the original failure point, while Rust reports the re-lexed
+token's end.
 
 One more row records a **lax hexadecimal escape**: `a = "\\u12g4"` reads
 as U+0012 in TypeScript and Rust, because the canonical scan accepts every

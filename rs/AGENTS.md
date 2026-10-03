@@ -325,38 +325,18 @@ comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,
 delete the local comparator in all three halves together.
 
-## The open divergence is an ENGINE repair, not a grammar one
+## The remaining lookahead divergence is positional
 
-One row of `../test/divergent.tsv` carries the `rust` column away from
-the other two ports, and nothing in this crate can close it.
+The engine now remembers a later `TIN_BD` token while matching alternates
+and preserves its diagnosis when none match. That closed two former rows
+of `../test/divergent.tsv` and the code difference in the third.
 
-When an alternate needs two tokens and the SECOND one is the lexer's bad
-token, the Rust engine once built its "no alternate matched" error from
-the first lookahead token alone (`deferred_error_code(t0)` in
-`tabnas/parser` `rs/src/parser.rs`), so a bad token at any slot past the
-first lost its code, and this port answered `unexpected` at the first
-token where TypeScript and Go raised the token's own diagnosis.
-tabnas/parser#274 repaired that in the engine: it now keeps the bad token
-it met while scanning the slots and raises its code, as the canonical
-does (`ts/src/rules.ts`, the deferred bad-token throw). The string
-matcher was never the cause: instrumented, it cuts exactly the same
-tokens in all three ports, including the second `#ST` the remaining row
-re-lexes out of the leftover apostrophes.
-
-What remains is one position:
-
-| input | ts, go | rust |
-|---|---|---|
-| `a = '''x''''''''''''''` | `unterminated_string@1:18` | `unterminated_string@1:22` |
-
-`["abc` and `["tbl<newline>"]`, which once answered `unexpected@1:1`
-here, now answer the canonical `unterminated_string@1:2` and
-`unprintable@1:2`, and their rows are gone. The repair for the position,
-if one is wanted, is the engine's as well: this plugin sees the token
-after the engine has chosen what to report. Six documents of the
-BurntSushi corpus were in this class; all six are rejected either way,
-so the `rust` row of `../test/conformance.tsv` is unaffected and the
-register is the only thing holding the difference.
+One position difference remains. For
+`a = '''x''''''''''''''`, leftovers from the first literal string re-lex
+into a second `#ST`. TypeScript and Go report
+`unterminated_string@1:18`, while this port reports the same code at
+`1:22`, the re-lexed token's end. The register pins that position until
+the engines agree about which point represents this failure.
 
 ## The conformance suite never skips
 
