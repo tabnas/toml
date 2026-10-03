@@ -160,18 +160,23 @@ const grammarText = `
     { s: ['#CA' '#CS'] b: 1 g: comma }
   ]
 
+  # A dotted key is a replace loop, as a dotted header is: each segment
+  # ending in a dot re-enters dive in the same frame (r), so rule depth
+  # stays what one segment needs however long the key, and only the value
+  # nests. dive_key counts the tables a key has descended through from the
+  # table it is in; the loop at the close, which takes the next dotted key
+  # without returning to the pair, resets it.
   rule: dive: {
     open: [
       {
         s: ['#ST #NR #ID' '#DOT']
-        p: dive
+        r: dive
         n: { dive_key: 1 }
         a: '@dive-key-dot'
       }
       {
         s: ['#ST #NR #ID' '#CL']
         p: val
-        n: { dive_key: 1 }
         u: { dive_end: true }
       }
     ]
@@ -180,7 +185,6 @@ const grammarText = `
         s: ['#ST #NR #ID' '#DOT']
         b: 2
         r: dive
-        c: '@lte-dive-key-1'
         n: { dive_key: 0 }
       }
       {}

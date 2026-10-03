@@ -205,9 +205,22 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// `a.b = 1` descends through `a`, so an existing table or array
 		// passes and a value under that name is a conflict, exactly as
 		// `[a.b]` would find it.
+		//
+		// A dotted key is a replace loop (tabnas/toml#78): each `key .`
+		// segment re-enters `dive` in the same frame, so rule depth stays
+		// what one segment needs however long the key. The first segment
+		// descends from the table the key is in, the parent's node; each
+		// later one from the table the segment before it reached, handed
+		// on as r.Prev.Node when the dive replaced itself, exactly as
+		// @table-dive-mid reads a header's. It used to push a dive per
+		// segment, so rule depth grew with the key.
 		"@dive-key-dot": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
 			key := tokenString(r.O0)
-			parent, ok := asMap(r.Parent.Node)
+			from := r.Parent.Node
+			if continuesKey(r) {
+				from = r.Prev.Node
+			}
+			parent, ok := asMap(from)
 			if !ok {
 				return
 			}
@@ -226,10 +239,6 @@ func makeRefs() map[jsonic.FuncRef]any {
 
 		"@lte-table-array-1": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
 			return r.Lte("table_array", 1)
-		}),
-
-		"@lte-dive-key-1": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
-			return r.Lte("dive_key", 1)
 		}),
 
 		"@lte-pk": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
@@ -256,6 +265,16 @@ func makeRefs() map[jsonic.FuncRef]any {
 			return ""
 		},
 	}
+}
+
+// continuesKey reports whether this dive continues the dotted key the dive
+// before it began: it was reached by `r: dive` from a `key .` segment. A
+// dive pushed by a pair or a map begins a key, and so does one reached
+// through the close loop from a dive that ENDED a key (dive_end), which
+// takes the next dotted key without returning to the pair.
+func continuesKey(r *jsonic.Rule) bool {
+	prev := r.Prev
+	return prev != nil && prev != jsonic.NoRule && prev.Name == "dive" && prev.U["dive_end"] == nil
 }
 
 // tokenString returns a token's value as a string.

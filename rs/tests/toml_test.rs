@@ -13,8 +13,8 @@ use std::thread;
 
 use tabnas::Value;
 use tabnas_toml::{
-    make, parse, plugin, toml, toml_time, TomlOptions, LOCAL_DATE, LOCAL_DATE_TIME, LOCAL_TIME,
-    OFFSET_DATE_TIME, VERSION,
+    make, parse, plugin, toml, toml_time, TomlOptions, DEPTH_GUARD, DEPTH_LIMIT, LOCAL_DATE,
+    LOCAL_DATE_TIME, LOCAL_TIME, OFFSET_DATE_TIME, VERSION,
 };
 
 use common::repo_dir;
@@ -283,6 +283,85 @@ fn string_error_columns_count_scalars_not_bytes() {
             error.col
         );
     }
+}
+
+// --- the depth guard -----------------------------------------------------
+
+/// The `n` segments of a dotted key or header, `a.a.….a`.
+fn segments(n: usize) -> String {
+    vec!["a"; n].join(".")
+}
+
+/// Nesting past `DEPTH_LIMIT` levels is refused with the engine's `cancel`
+/// code, whichever way a document nests (tabnas/toml#78): a dotted key, a
+/// header, an array of tables, an inline table, or a mix of them. A level
+/// is a container the value sits in, the root table included, so a dotted
+/// key of n segments nests n levels and a header of n segments n + 1.
+/// TypeScript and Go have no limit, which `../test/divergent.tsv` records
+/// with the two smallest documents refused here; this test pins the
+/// boundaries, that width is not depth, and that the shared default parser
+/// is guarded too. jsonic's guard counted only its own containers, so an
+/// inline table was bounded already and a dotted key of 10,000 segments
+/// parsed, at rule depth 10,002.
+#[test]
+fn nesting_is_bounded_by_the_depth_guard() {
+    assert_eq!(127, DEPTH_LIMIT, "the limit is jsonic's");
+    let parser = make();
+    let shown = |src: &str| src.replace('\n', "\\n");
+    let parses = |src: &str| {
+        parser
+            .parse(src)
+            .unwrap_or_else(|error| panic!("{:.60}: {error}", shown(src)));
+    };
+    let refused = |src: &str| {
+        let error = parser
+            .parse(src)
+            .err()
+            .unwrap_or_else(|| panic!("{:.60}: must be refused", shown(src)));
+        assert_eq!("cancel", error.code, "{:.60}", shown(src));
+    };
+
+    // A dotted key of n segments nests n levels: the root table, and a
+    // table per segment but the last, which holds the value.
+    parses(&format!("{} = 1", segments(127)));
+    for n in [128, 129, 500, 10_000] {
+        refused(&format!("{} = 1", segments(n)));
+    }
+    // A header of n segments nests n + 1: its tables sit in the root. The
+    // header is refused at the segment past the limit, before its body
+    // opens and before any value past the limit is built.
+    parses(&format!("[{}]\nx = 1", segments(126)));
+    refused(&format!("[{}]\nx = 1", segments(127)));
+    refused(&format!("[{}]", segments(127)));
+    refused(&format!("[{}]", segments(10_000)));
+    // An array of tables holds its element in an array: one level more.
+    parses(&format!("[[{}]]\nx = 1", segments(125)));
+    refused(&format!("[[{}]]\nx = 1", segments(126)));
+    // A dotted key counts from the table it is in.
+    parses(&format!("[{}]\n{} = 1", segments(100), segments(27)));
+    refused(&format!("[{}]\n{} = 1", segments(100), segments(28)));
+    // An inline table is a level, and a dotted key inside it counts on from
+    // the key it is the value of: `a.a = {` is two levels a time.
+    let inline = |n: usize| format!("{}a = 1{}", "a.a = {".repeat(n), "}".repeat(n));
+    parses(&inline(63));
+    refused(&inline(64));
+    // Width is not depth: ten thousand dotted keys side by side, through
+    // the dive's close loop.
+    let wide: Vec<String> = (0..10_000).map(|i| format!("k{i}.a = {i}")).collect();
+    parses(&wide.join("\n"));
+    // The shared default parser is guarded too.
+    assert_eq!(
+        "cancel",
+        parse(&format!("{} = 1", segments(10_000)))
+            .unwrap_err()
+            .code
+    );
+    // A caller that lifts the guard, by name, parses what it asked for.
+    let mut lifted = make();
+    lifted.remove_parse_guard(DEPTH_GUARD);
+    lifted
+        .parse(&format!("{} = 1", segments(300)))
+        .expect("the guard was lifted");
 }
 
 // --- key names that are not special -------------------------------------

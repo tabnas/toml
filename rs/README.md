@@ -151,6 +151,17 @@ has no way to say what JavaScript says:
   behind an `Arc` and copies when a second handle writes to it, so a
   table rule holds the route from the document root to its table rather
   than a handle on it. The document that comes out is the same one.
+- **Nesting past 127 levels is refused**, with the engine's `cancel`
+  code, by a parse guard of this crate's (`DEPTH_LIMIT`, `DEPTH_GUARD`):
+  through a dotted key, a header, an array of tables, an inline table or
+  any mix of them, the root table counting as the first level. The number
+  is jsonic's, and the reason is the Rust value's: displaying, converting
+  or dropping a `Value` walks it with the call stack, so an unbounded
+  document would end the process rather than return an error. TypeScript
+  and Go have no limit; the two rows in
+  [`../test/divergent.tsv`](../test/divergent.tsv) record it, and
+  `parser.remove_parse_guard(DEPTH_GUARD)` lifts it for a caller that
+  wants the depth and has the stack for it.
 - **Columns count Unicode scalar values.** An astral character advances
   the column by one, where TypeScript counts UTF-16 units and advances by
   two. That is the engine's unit, recorded in its own

@@ -75,8 +75,10 @@ TOML's shape is unusual because *position in the document* determines
   `@table-dive-*` / `@table-key-cs-*` actions that build or reuse the
   nested objects and arrays.
 - **Dotted keys.** `a.b.c = 1` is handled by the `dive` rule, which
-  recurses on each `.` segment (bounded by the `dive_key` counter),
-  creating an object per segment and assigning the value at the leaf.
+  re-enters itself on each `.` segment, a replace loop like the header's,
+  so the rule stack stays one frame deep however long the key; it creates
+  an object per segment and assigns the value at the leaf. The `dive_key`
+  counter records how many tables the key has descended through.
 
 Both reduce to the same idea: consume key segments, descend or allocate
 nested objects as you go, and place the value at the bottom. The result

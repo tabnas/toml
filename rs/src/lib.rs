@@ -37,7 +37,7 @@
 use std::sync::OnceLock;
 
 use serde_json::{json, Map, Value as Json};
-use tabnas::{GrammarError, GrammarSpec, Plugin, PluginError, Tabnas, Value, ValueDef};
+use tabnas::{Context, GrammarError, GrammarSpec, Plugin, PluginError, Tabnas, Value, ValueDef};
 
 mod datematcher;
 mod daterange;
@@ -203,18 +203,23 @@ pub(crate) const GRAMMAR_TEXT: &str = r#"
     { s: ['#CA' '#CS'] b: 1 g: comma }
   ]
 
+  # A dotted key is a replace loop, as a dotted header is: each segment
+  # ending in a dot re-enters dive in the same frame (r), so rule depth
+  # stays what one segment needs however long the key, and only the value
+  # nests. dive_key counts the tables a key has descended through from the
+  # table it is in; the loop at the close, which takes the next dotted key
+  # without returning to the pair, resets it.
   rule: dive: {
     open: [
       {
         s: ['#ST #NR #ID' '#DOT']
-        p: dive
+        r: dive
         n: { dive_key: 1 }
         a: '@dive-key-dot'
       }
       {
         s: ['#ST #NR #ID' '#CL']
         p: val
-        n: { dive_key: 1 }
         u: { dive_end: true }
       }
     ]
@@ -223,7 +228,6 @@ pub(crate) const GRAMMAR_TEXT: &str = r#"
         s: ['#ST #NR #ID' '#DOT']
         b: 2
         r: dive
-        c: '@lte-dive-key-1'
         n: { dive_key: 0 }
       }
       {}
@@ -426,6 +430,108 @@ fn adjust_messages(options: &mut Map<String, Json>) {
     );
 }
 
+/// How many levels a document may nest before the parse is refused, with
+/// the engine's `cancel` code: 127 levels parse, the 128th is refused.
+///
+/// A level is a container the value being built sits in: the document's
+/// root table, a table or an array of tables along a header's or a dotted
+/// key's path, an inline table, an array. The number is jsonic's, which
+/// `tabnas-json` and `serde_json` use too, so an inline table, which is
+/// jsonic's, is bounded where it always was, and a dotted key and a
+/// header, which nest through this grammar's own rules and went unbounded
+/// under jsonic's check, are bounded with it (tabnas/toml#78): a key of
+/// 10,000 segments used to parse, building a value 10,000 deep.
+///
+/// The engine parses iteratively, but displaying, converting or dropping a
+/// `Value` walks the tree with the call stack, so an unbounded document
+/// ends the caller's process rather than returning an error. TypeScript
+/// and Go have no limit, which `../test/divergent.tsv` records. A caller
+/// that wants the depth anyway lifts the guard with
+/// `parser.remove_parse_guard(DEPTH_GUARD)`, and drops the value on a
+/// stack that can take it.
+pub const DEPTH_LIMIT: usize = 127;
+
+/// The name the depth check is installed under, as a parse guard, and the
+/// name `Tabnas::remove_parse_guard` takes to lift it.
+///
+/// It is the name jsonic installs its own check under, so this one
+/// replaces it, as YAML's does: jsonic's counts its `map` and `list`
+/// rules, which is every inline table and array, but a header and a
+/// dotted key nest through `table` and `dive`, which it does not see. A
+/// guard rather than the parse budget, because the budget is one slot a
+/// caller's `parse_budget` replaces, and a guard holds whatever budget the
+/// caller sets. A parse a grammar's guard cancels is reported by the
+/// fleet's tools as the input's fault, naming the guard.
+pub const DEPTH_GUARD: &str = "depth";
+
+/// Whether a rule of this name holds a container: jsonic's `map` and
+/// `list`, which here are a table's body, an inline table and an array.
+fn is_container(name: &str) -> bool {
+    "map" == name || "list" == name
+}
+
+/// How deep the value being built is nested at this point of the parse:
+/// the root table; the containers open on the rule stack and in the rule
+/// the loop is working on, which the engine hands over apart from the
+/// stack; the tables the nearest header reached; and the tables the
+/// current dotted key has descended through, the `dive_key` counter the
+/// grammar keeps on the dive and every rule under it inherits, an inline
+/// table's keys included.
+///
+/// The root table is counted first, because no rule stands for it on its
+/// own: a document's keys live in a `map` rule the root `table` pushes, or
+/// in a `dive` it pushes straight away when the first key is dotted. A
+/// header's tables are read two ways. A `table` rule on the stack has its
+/// body open, and its path, kept in its `u` bag, is exact, arrays of
+/// tables included; the body itself is a `map` rule INSIDE the table at
+/// the end of that path, not a level of its own, so the `map` directly
+/// above such a table is taken off again (and the root's body with it,
+/// at path length zero). A `table` rule that is the current rule is still
+/// reading its header, one segment per replacement, and a replacement
+/// inherits counters but not `u`, so its path says nothing yet: there the
+/// `table_dive` counter, the segments entered so far, plus the one being
+/// read, say how deep the header has got, so a header is refused at the
+/// segment that passes the limit and never builds a value past it.
+///
+/// Counted afresh at each step. Every level holds a container and a few
+/// other rules, and a repetition re-enters its rule in one frame, so what
+/// a step walks is bounded by the limit itself.
+fn depth(context: &Context) -> usize {
+    let counter = |rule: &tabnas::RuleSnapshot, name: &str| {
+        rule.n
+            .get(name)
+            .map_or(0, |count| usize::try_from(*count).unwrap_or(0))
+    };
+    let current = context.rule.as_ref();
+    let mut levels = 1;
+    let mut header_seen = false;
+    let mut above: Option<&str> = None;
+    let rules = current.into_iter().chain(context.rule_stack.iter().rev());
+    for (index, rule) in rules.enumerate() {
+        let name: &str = rule.name.as_ref();
+        if is_container(name) {
+            levels += 1;
+        } else if "table" == name && !header_seen {
+            header_seen = true;
+            if 0 == index && current.is_some() {
+                levels += 1 + counter(rule, "table_dive");
+            } else {
+                levels += node::snapshot_path(Some(rule)).len();
+                if Some("map") == above {
+                    levels -= 1;
+                }
+            }
+        }
+        above = Some(name);
+    }
+    levels + current.map_or(0, |rule| counter(rule, "dive_key"))
+}
+
+/// The depth guard: [`DEPTH_LIMIT`] levels parse, the next one is refused.
+fn within_depth_limit(context: &Context) -> bool {
+    depth(context) <= DEPTH_LIMIT
+}
+
 /// Install the TOML grammar on an instance that already carries the
 /// jsonic base grammar.
 ///
@@ -444,6 +550,10 @@ pub fn toml(parser: &mut Tabnas) -> Result<(), GrammarError> {
     let document = grammar_document()?;
     let spec = GrammarSpec::from_value(document)?;
     parser.grammar(&spec)?;
+
+    // Replaces jsonic's guard, which counts only jsonic's own containers
+    // (see `DEPTH_GUARD`).
+    parser.parse_guard(DEPTH_GUARD, within_depth_limit);
 
     // After the document, because it is the document that installs the
     // option tree these replace part of.

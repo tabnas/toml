@@ -215,3 +215,138 @@ func TestLongDottedHeaderValue(t *testing.T) {
 		t.Errorf("the refusal says %q, want %q", te.Detail, want)
 	}
 }
+
+// tomlDottedKey is a dotted key of n segments, a.a.….a = 1.
+func tomlDottedKey(n int) string {
+	return strings.TrimSuffix(strings.Repeat("a.", n), ".") + " = 1\n"
+}
+
+// deepestRule is the engine's rule depth D the deepest rule of a parse
+// reaches, read through a rule subscriber.
+func deepestRule(t *testing.T, src string) int {
+	t.Helper()
+	j := MakeJsonic()
+	deepest := 0
+	j.Sub(nil, func(r *jsonic.Rule, _ *jsonic.Context) {
+		if r.D > deepest {
+			deepest = r.D
+		}
+	})
+	if _, err := j.Parse(src); err != nil {
+		t.Fatalf("%.40q…: %v", src, err)
+	}
+	return deepest
+}
+
+// TestDottedKeyRuleDepthIsConstant: a dotted key is a replace loop
+// (tabnas/toml#78). Each segment ending in a dot re-enters `dive` in the
+// same frame, so the engine's rule depth D stays what one segment needs
+// however long the key. It used to push a dive per segment, so D was the
+// segment count plus two, 10,002 for ten thousand segments, past the
+// 3,000 open rules aless allows a parse. A header, which was always a
+// loop, is the control. Mirrors 'a dotted key keeps rule depth constant'
+// in ts/test/perf.test.ts and a_dotted_key_keeps_rule_depth_constant in
+// rs/tests/perf_test.rs.
+func TestDottedKeyRuleDepthIsConstant(t *testing.T) {
+	two := deepestRule(t, tomlDottedKey(2))
+	many := deepestRule(t, tomlDottedKey(10000))
+	if many != two {
+		t.Errorf("ten thousand segments reach rule depth %d, where two reach %d: "+
+			"the dive is a push chain again", many, two)
+	}
+	if h2, h := deepestRule(t, tomlDottedHeader(2)), deepestRule(t, tomlDottedHeader(10000)); h != h2 {
+		t.Errorf("a header's rule depth grew with its length: %d against %d", h, h2)
+	}
+}
+
+// TestDottedKeyIsLinear: a dotted key takes time in proportion to its
+// number of segments. This port hands each segment the table the previous
+// one reached, as r.Prev.Node, which is constant work; the Rust port used
+// to walk the tree from its root on every segment (tabnas/toml#78).
+// Measured as TestDottedHeaderIsLinear is. Mirrors 'a dotted key takes
+// time in proportion to its length' in ts/test/perf.test.ts and
+// a_dotted_key_takes_time_in_proportion_to_its_length in
+// rs/tests/perf_test.rs.
+func TestDottedKeyIsLinear(t *testing.T) {
+	const short = 2000
+	j := MakeJsonic()
+	timeOf := func(src string) time.Duration {
+		best := time.Duration(0)
+		for run := 0; run < 5; run++ {
+			runtime.GC()
+			t0 := time.Now()
+			if _, err := j.Parse(src); err != nil {
+				t.Fatalf("the key does not parse: %v", err)
+			}
+			if took := time.Since(t0); run == 0 || took < best {
+				best = took
+			}
+		}
+		return best
+	}
+	few := tomlDottedKey(short)
+	many := tomlDottedKey(4 * short)
+	timeOf(few)
+	timeOf(many)
+	var seen []string
+	for attempt := 0; attempt < 3; attempt++ {
+		fewTime := timeOf(few)
+		manyTime := timeOf(many)
+		ratio := float64(manyTime) / float64(max(fewTime, 1))
+		seen = append(seen, fmt.Sprintf("%v and %v (%.1fx)", fewTime, manyTime, ratio))
+		if ratio <= 8 {
+			t.Logf("%d segments=%v  %d segments=%v  ratio=%.2fx", short, fewTime, 4*short, manyTime, ratio)
+			return
+		}
+	}
+	t.Errorf("a dotted key's parse time grows faster than its length: %d and %d segments "+
+		"took %s (linear is about 4x, quadratic 16x). Something per segment is walking the "+
+		"path from the root, copying it, or keeping a copy of it.",
+		short, 4*short, strings.Join(seen, ", then "))
+}
+
+// TestLongDottedKeyValue: a key thousands of segments long builds exactly
+// the tables it names, and later keys walk back down through them: one
+// adds a value beside the first key's last segment, one adds a table
+// there, and one that treats a segment holding a value as a table is
+// refused, with the same diagnosis a short key gets. Mirrors 'a long
+// dotted key builds every table it names' in ts/test/perf.test.ts and
+// a_long_dotted_key_builds_every_table_it_names in rs/tests/perf_test.rs.
+func TestLongDottedKeyValue(t *testing.T) {
+	const depth = 5000
+	keys := make([]string, depth)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d", i)
+	}
+	path := strings.Join(keys, ".")
+	prefix := strings.Join(keys[:depth-1], ".")
+	src := fmt.Sprintf("%s = 1\n%s.y = 2\n%s.z.w = 3\n", path, prefix, prefix)
+	table, err := Parse(src)
+	if err != nil {
+		t.Fatalf("the long keys do not parse: %v", err)
+	}
+	// Walked with a loop, level by level.
+	for level, key := range keys[:depth-1] {
+		m, ok := table.(*jsonic.OrderedMap)
+		if !ok || len(m.Keys) != 1 || m.Keys[0] != key {
+			t.Fatalf("level %d should hold %s and nothing else, and holds %v", level, key, table)
+		}
+		table, _ = m.Get(key)
+	}
+	got, err := json.Marshal(table)
+	if err != nil {
+		t.Fatalf("marshal the innermost table: %v", err)
+	}
+	if want := fmt.Sprintf(`{"k%d":1,"y":2,"z":{"w":3}}`, depth-1); string(got) != want {
+		t.Errorf("the innermost table is %s, want %s", got, want)
+	}
+
+	_, err = Parse(src + fmt.Sprintf("%s.q = 4\n", path))
+	var te *jsonic.JsonicError
+	if !errors.As(err, &te) || te.Code != "toml_key_conflict" {
+		t.Fatalf("the last segment holds a value, so it is not a table to add to; got %v", err)
+	}
+	if want := fmt.Sprintf("cannot define k%d, it already has the value 1", depth-1); !strings.Contains(te.Detail, want) {
+		t.Errorf("the refusal says %q, want %q", te.Detail, want)
+	}
+}
