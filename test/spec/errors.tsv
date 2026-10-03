@@ -31,6 +31,15 @@ a = "\xAg"	ERROR:invalid_ascii
 a = "\xg1"	ERROR:invalid_ascii
 a = "\xA"	ERROR:invalid_ascii
 a = "\UFFFFFFFF"	ERROR:invalid_unicode
+# A BAD TOKEN IN THE SECOND SLOT of an alternate keeps its own code. When an
+# alternate needs two tokens and the second is the lexer's bad token, the Rust
+# engine once built its "no alternate matched" error from the first token
+# alone, so both rows answered `unexpected` there while TypeScript and Go
+# named the bad token. tabnas/parser#274 repaired that in the engine, and the
+# register rows that held the difference are gone; these two catch a return
+# to `unexpected` in any port.
+["abc	ERROR:unterminated_string
+["tbl\n"]	ERROR:unprintable
 # Date and time RANGE, audit item T6 -- the largest divergence class in this
 # repo and the only one where the two ports agreed on the DECISION and
 # disagreed on the VALUE. Both accepted every row below. TypeScript built a JS

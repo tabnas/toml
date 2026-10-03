@@ -814,7 +814,13 @@ function makeTomlStringMatcher() {
       if (delimiter !== src[sI + 2]) {
         pnt.sI = sI + 2
         pnt.cI = cI + 2
-        return lex.token('#ST', EMPTY, EMPTY, pnt)
+        // The empty string's token carries its two quote characters as its
+        // source, as every other string token carries its text. It used to
+        // carry nothing, so a reader that places a token by the length of
+        // its source (a highlighter, the lsp's reconciliation) could not
+        // place it. Go and Rust have always carried the quotes
+        // (tabnas/toml#85).
+        return lex.token('#ST', EMPTY, src.substring(begin, sI + 2), pnt)
       }
 
       sI += 2
@@ -824,9 +830,19 @@ function makeTomlStringMatcher() {
 
     // A newline immediately following the opening delimiter will be trimmed.
     // https://toml.io/en/v1.0.0#string
+    //
+    // Trimmed from the VALUE, not from the source: it is still a line, so
+    // the row moves past it. This matcher owns its row and column
+    // arithmetic (the Rust port hands the engine a count of characters and
+    // gets both for free), and here it consumed the line feed without
+    // counting the row, so every token and every diagnostic after a
+    // multi-line string was reported one row early, per such string before
+    // it (tabnas/toml#85). The line feed a line-ending backslash trims,
+    // below, was consumed the same way.
     if (isMultiline) {
       if ('\n' === src[sI + 1]) {
         ++sI
+        ++rI
         cI = 0
       }
     }
@@ -877,14 +893,18 @@ function makeTomlStringMatcher() {
             cI += 2
             sI += 2
 
+            // Up to two further delimiters belong to the value, and each is
+            // a column of the source as well as a character of the value.
             if (delimiter === src[sI + 1]) {
               value += delimiter
               sI++
+              cI++
             }
 
             if (delimiter === src[sI + 1]) {
               value += delimiter
               sI++
+              cI++
             }
           }
 
@@ -1007,6 +1027,13 @@ function makeTomlStringMatcher() {
                   isMultiline &&
                   (isWhitespace(char) || char === '\n' || char === '\r')
                 ) {
+                  // The line feed right after the backslash was read above
+                  // as the escaped character, so it is counted as a row
+                  // here; the loop below counts only the ones after it.
+                  if ('\n' === char) {
+                    ++rI
+                    cI = 0
+                  }
                   while (
                     (' ' === src[sI + 1] && ++cI) ||
                     ('\t' === src[sI + 1] && ++cI) ||
