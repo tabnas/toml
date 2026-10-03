@@ -13,8 +13,8 @@ use std::rc::Rc;
 use tabnas::{ActionError, Context, Rule, Tabnas, Value};
 
 use crate::node::{
-    merge_into, new_map, path_of, set_path, snapshot_path, write_at, Cell, Cursor, Path, DEFINE,
-    DESCEND,
+    existing_at, merge_into, new_map, path_of, redefined, set_path, snapshot_path, write_at, Cell,
+    Cursor, Path, Reach,
 };
 use crate::strmatcher::make_toml_string_matcher;
 use crate::values::{isodate_val, localtime_val};
@@ -193,7 +193,25 @@ fn register_state_actions(parser: &mut Tabnas) {
         };
         let value = child.node.borrow().clone();
         let key = key_of(rule, context);
+        if let Some(existing) = existing_at(context, &cell_of(rule), path_of(rule), &key) {
+            return Err(redefined(&key, &existing));
+        }
         write_at(context, &cell_of(rule), path_of(rule), key, value);
+        Ok(())
+    });
+
+    // Before the base grammar's own before-close action writes the pair: a
+    // key already in the table is a conflict, not a merge. The pair's cell
+    // is its map's, whose value is the map itself. SUFFIXED as `@map-bo`
+    // is, and `/prepend` so that it runs first.
+    parser.state_action_ref("@pair-bc/prepend", |rule, context| {
+        if !truthy(rule.u.get("pair")) {
+            return Ok(());
+        }
+        let key = key_of(rule, context);
+        if let Some(existing) = existing_at(context, &cell_of(rule), Path::ROOT, &key) {
+            return Err(redefined(&key, &existing));
+        }
         Ok(())
     });
 }
@@ -214,7 +232,7 @@ fn register_alt_actions(parser: &mut Tabnas) {
         } else {
             // A plain-table dive into an existing array of tables walks
             // THROUGH it, which is how `[[x]]` followed by `[x.y]` works.
-            cursor.table_at(context, &key, DESCEND)
+            cursor.table_at(context, &key, Reach::Descend)
         };
         conclude(rule, context, &cell, cursor, outcome, false)
     });
@@ -226,7 +244,7 @@ fn register_alt_actions(parser: &mut Tabnas) {
         if cursor.is_list() {
             cursor.last_of_list(context);
         }
-        let outcome = cursor.table_at(context, &key, DESCEND);
+        let outcome = cursor.table_at(context, &key, Reach::Descend);
         conclude(rule, context, &cell, cursor, outcome, false)
     });
 
@@ -240,7 +258,7 @@ fn register_alt_actions(parser: &mut Tabnas) {
         let outcome = if array {
             cursor.array_at(context, &key)
         } else {
-            cursor.table_at(context, &key, DEFINE)
+            cursor.table_at(context, &key, Reach::Define)
         };
         conclude(rule, context, &cell, cursor, outcome, !array)
     });
@@ -259,7 +277,7 @@ fn register_alt_actions(parser: &mut Tabnas) {
         let outcome = if array {
             cursor.array_at(context, &key)
         } else {
-            cursor.table_at(context, &key, DEFINE)
+            cursor.table_at(context, &key, Reach::Define)
         };
         conclude(rule, context, &cell, cursor, outcome, !array)
     });
@@ -294,11 +312,15 @@ fn register_alt_actions(parser: &mut Tabnas) {
         Ok(())
     });
 
+    // A dotted key: `a.b = 1` descends through `a`, so an existing table or
+    // array passes and a value under that name is a conflict, exactly as
+    // `[a.b]` would find it. A table it creates is one a dotted key
+    // defined, which no later header may define again.
     parser.action_with_context("@dive-key-dot", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
         let mut cursor = Cursor::walk(context, &cell, parent_path(rule));
-        let outcome = cursor.table_at(context, &key, DESCEND);
+        let outcome = cursor.table_at(context, &key, Reach::Dive);
         conclude(rule, context, &cell, cursor, outcome, true)
     });
 }

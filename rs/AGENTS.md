@@ -125,6 +125,17 @@ two ports, handed `r.prev.node` by reference, take milliseconds
   containers are recorded and written in ONE walk when the header ends,
   when an action fails (so a diagnostic is raised over the same tree as
   before), or before anything else reads or writes the tree (`settle`).
+- **A table's history is a trie, not a path lookup.** A header may define
+  an existing table only when a header's prefix created it and no header
+  has defined it yet (`[a.b]` then `[a]`; `[a]` twice, `a.b = 1` then `[a]`
+  and `a = {}` then `[a]` are `toml_key_conflict`). The other two ports
+  keep those tables in a set of nodes; a node here is a path, and a path
+  copied or serialised per segment would make a header quadratic again.
+  So the cursor also carries a number: its node in a trie over the tree's
+  paths, flat in one map in the context's `u` bag (`toml_implicit`), whose
+  entry for a child is keyed by the parent's number and the segment and
+  holds the child's number and the implicit flag. One hash lookup per
+  segment, whatever the depth.
 
 The document is the same, table for table and key for key, because each
 table is created in the same container, under the same key, in the same

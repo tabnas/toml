@@ -46,6 +46,47 @@ runtime	total	rejected	diagnosed	crashes
 # ../test/divergent.tsv, where Go is the repair TARGET and the two that
 # move are TypeScript and Rust, so this gap closes from the ts side.
 #
+# WHY EVERY ROW WENT UP, ts 278 -> 309, go 280 -> 311, rust 278 -> 309,
+# 2026-10-03
+#
+# The thirty-one are four shapes TOML forbids and every port accepted,
+# building a value TOML says does not exist: a key given a second value
+# (`a = 1` then `a = 2`, which the base grammar's duplicate-key rule read
+# as last wins, and `tbl = {k = 1}` then `tbl = {kk = 2}`, which it
+# merged), the same inside an inline table (`a = {b = 1, b = 2}`), a
+# header written twice (`[a]` then `[a]`), and a header for a table a
+# dotted key or an inline table had already defined (`a.b = 1` then `[a]`,
+# `a = {}` then `[a]`). All three ports refuse them with toml_key_conflict
+# since the same change (ts/src/toml.ts, go/refs.go, rs/src/node.rs and
+# rs/src/refs.rs): a pair or a dotted key's last segment refuses a key the
+# table already holds, and a header may define an existing table only when
+# its own prefix created it and no header has defined it yet. Obtained by
+# diffing the accepted sets before and after, in each port; the same
+# thirty-one in all three:
+#
+#   inline-table/duplicate-key-01  inline-table/duplicate-key-02
+#   inline-table/overwrite-03  inline-table/overwrite-05
+#   key/duplicate-keys-01 .. key/duplicate-keys-09 (nine)
+#   spec-1.0.0/table-9-0  spec-1.0.0/table-9-1
+#   spec-1.1.0/common-46-0  spec-1.1.0/common-46-1
+#   table/append-with-dotted-keys-04  table/append-with-dotted-keys-05
+#   table/duplicate-key-01  table/duplicate-key-04  table/duplicate-key-05
+#   table/duplicate-key-08  table/duplicate-key-09  table/duplicate-key-11
+#   table/duplicate-key-12  table/duplicate-key-13  table/duplicate-key-14
+#   table/redefine-02  table/redefine-03  table/super-twice
+#
+# The valid half does not move: 268 of 268 in every port, before and after.
+#
+# What stays accepted in this family, and why: a table's body is parsed
+# into a map of its own and merged into the table when the body ends, so a
+# key the table already holds from an EARLIER header is still overwritten
+# at the merge (`[a.b]` `c = 1` then `[a]` `b = 2`;
+# table/overwrite-array-in-parent; inline-table/overwrite-01 and -09 are
+# the same split between a root-level dotted key and the root's map), and
+# an inline table is not yet closed to a later header or dotted key
+# reaching INTO it (`a = {}` then `[a.b]`; inline-table/duplicate-key-03,
+# overwrite-02, overwrite-08). Those are not among the four shapes.
+#
 # WHY go WENT UP, 261 -> 280, 2026-10-02
 #
 # The nineteen are the key-conflict class (audit items T4 and T5): a key
@@ -112,7 +153,7 @@ runtime	total	rejected	diagnosed	crashes
 #
 # THE rust ROW REPRODUCES THE ts ROW, WHICH IS THE POINT
 #
-# The Rust port measures 278/278/0, the same three numbers as TypeScript, on
+# The Rust port measures 309/309/0, the same three numbers as TypeScript, on
 # the same corpus. It diagnoses the key-conflict class as TypeScript does,
 # and reads the `\u12g4` escape laxly as TypeScript does, so it sits on the
 # ts side of the two-document gap above.
@@ -130,11 +171,17 @@ runtime	total	rejected	diagnosed	crashes
 # RE-MEASURED 2026-10-02 IN EVERY RUNTIME against the sibling checkouts at
 # main, wired as CI wires them (a go.work over the six modules, the npm
 # symlinks): parser 0e48785, jsonic fc0edf0, json 7e893b8, support 67ba2c9,
-# debug 0bdcc3e. ts 278/278/0, go 280/280/0, rust 278/278/0: the three rows
-# below. The published pins go/go.mod names (parser v0.12.7, jsonic v0.7.2,
-# json v0.5.11, support v0.3.5; `GOWORK=off go test`) give go the same
-# 280/280/0 today, so the two builds agree; the sibling figures are the
-# ones recorded.
-ts	509	278	278	0
-go	509	280	280	0
-rust	509	278	278	0
+# debug 0bdcc3e. ts 278/278/0, go 280/280/0, rust 278/278/0. The published
+# pins go/go.mod names (parser v0.12.7, jsonic v0.7.2, json v0.5.11,
+# support v0.3.5; `GOWORK=off go test`) gave go the same 280/280/0, so the
+# two builds agreed; the sibling figures are the ones recorded.
+#
+# RE-MEASURED 2026-10-03 IN EVERY RUNTIME, after the four shapes above were
+# refused, against the sibling checkouts at main, wired the same way:
+# parser e0a5e3f, jsonic fc0edf0, json 7e893b8, support 67ba2c9, debug
+# 0bdcc3e. ts 309/309/0, go 311/311/0, rust 309/309/0: the three rows
+# below. The published pins (parser v0.12.8, jsonic v0.7.2, json v0.5.11,
+# support v0.3.5; `GOWORK=off go test`) give go the same 311/311/0.
+ts	509	309	309	0
+go	509	311	311	0
+rust	509	309	309	0

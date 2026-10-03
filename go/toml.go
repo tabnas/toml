@@ -510,8 +510,10 @@ func registerErrorMessages(j *jsonic.Jsonic) {
 			"toml_key_conflict": `
 TOML does not allow a key to be redefined, and a key that already holds a
 value is not a table you can add to. This usually means the same name was
-used twice - as a value and then as a table or table-array header, or twice
-inside one inline table.`,
+used twice: a key given a second value, a table or table-array header over a
+key that already holds a value, a header written a second time, a header for
+a table that a dotted key or an inline table had already defined, or the same
+name twice inside one inline table.`,
 			"invalid_datetime": `
 The value has the shape of a date or time, but one of its components is out
 of range: month 1-12, day 1 to the length of that month, hour 0-23, minute

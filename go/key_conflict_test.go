@@ -23,7 +23,9 @@ import (
 // array of tables redefined as a table was replaced by the second table,
 // dropping the first. Nothing reported either. The nineteen documents of
 // the BurntSushi corpus in this class are what moved the `go` row of
-// test/conformance.tsv.
+// test/conformance.tsv in 2026-10-02; the four shapes at the end of the
+// table, which every port accepted until 2026-10-03, are the thirty-one
+// that moved it again.
 //
 // The code is asserted, not merely the failure: the engine turns an
 // arbitrary panic inside an action into `internal`, and an `internal`
@@ -43,7 +45,7 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 		{"a = 1\n[a.b.c]\nd = 2", "cannot define a, it already has the value 1", "2:2"},
 		{"[a]\nb = 1\n[a.b]\nc = 2", "cannot define b, it already has the value 1", "3:4"},
 		{"[a]\nb = 1\n[a.b.c]\nd = 2", "cannot define b, it already has the value 1", "3:4"},
-		{"[t]\na = 1\n[t]\n[t.a]\nb = 2", "cannot define a, it already has the value 1", "4:4"},
+		{"[t]\na = 1\n[t.a]\nb = 2", "cannot define a, it already has the value 1", "3:4"},
 
 		// A value used again as a table-array header.
 		{"a = 1\n[[a]]\nb = 2", "cannot define a, it already has the value 1", "2:3"},
@@ -63,6 +65,31 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 		{"[[fruit]]\nname = \"apple\"\n[[fruit.variety]]\nname = \"red delicious\"\n" +
 			"[fruit.variety]\nname = \"granny smith\"",
 			"cannot define variety, it is already an array of tables", "5:8"},
+
+		// A key given a second value: a plain key, the last segment of a
+		// dotted key, and a key in an inline table. The base grammar's
+		// answer to a repeated key, last wins and tables merged, is not
+		// TOML's. Raised on the key's own token.
+		{"a = 1\na = 2", "cannot define a, it already has the value 1", "2:1"},
+		// A quoted key's token sits after its closing quote, in every port.
+		{"a = 1\n\"a\" = 2", "cannot define a, it already has the value 1", "2:4"},
+		{"tbl = {k = 1}\ntbl = {kk = 2}", "cannot define tbl, it already has the value {\"k\":1}", "2:1"},
+		{"a.b = 1\na.b = 2", "cannot define b, it already has the value 1", "2:3"},
+		{"a.b.c = 1\na.b = 2", "cannot define b, it already has the value {\"c\":1}", "2:3"},
+		{"[t]\na = 1\na = 2", "cannot define a, it already has the value 1", "3:1"},
+		{"a = {b = 1, b = 2}", "cannot define b, it already has the value 1", "1:13"},
+		{"a = {b.c = 1, b.c = 2}", "cannot define c, it already has the value 1", "1:17"},
+
+		// A header written twice, and a header for a table a dotted key
+		// or an inline table had defined. A header may define the table
+		// its own prefix created, once, and nothing else that exists.
+		{"[a]\n[a]", "cannot define a, it is already defined", "2:2"},
+		{"[a]\nb = 1\n[a]\nc = 2", "cannot define a, it is already defined", "3:2"},
+		{"[a.b]\n[a]\n[a]", "cannot define a, it is already defined", "3:2"},
+		{"[a]\n[a.b]\n[a.b]", "cannot define b, it is already defined", "3:4"},
+		{"a.b = 1\n[a]\nc = 2", "cannot define a, it is already defined", "2:2"},
+		{"[a]\nb.c = 1\n[a.b]\nd = 2", "cannot define b, it is already defined", "3:4"},
+		{"a = {}\n[a]", "cannot define a, it is already defined", "2:2"},
 	}
 
 	for _, c := range cases {
@@ -104,21 +131,24 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 // element of an existing array of tables is legitimate and must NOT read
 // as a conflict. Four valid corpus documents do exactly this, and a first
 // cut of the TypeScript check rejected all four. The expected values are
-// the TypeScript port's.
+// the TypeScript port's. Three cases that used to sit here, `a.b = 1` then
+// `[a]`, `[a]` `b.c = 1` then `[a.b]`, and `[a]` twice, are conflicts in
+// TestKeyConflictIsDiagnosed since 2026-10-03.
 func TestImplicitTablesStayLegal(t *testing.T) {
 	cases := []struct{ src, want string }{
 		{"a = {b = 1, c = 2}", `{"a":{"b":1,"c":2}}`},
 		{"a = {b.c = 1, b.d = 2}", `{"a":{"b":{"c":1,"d":2}}}`},
-		// A `[table]` header extends the implicit table a dotted key or a
-		// deeper header made; a dotted key extends the table a header made.
-		{"a.b = 1\n[a]\nc = 2", `{"a":{"b":1,"c":2}}`},
+		{"a.b = 1\na.c = 2", `{"a":{"b":1,"c":2}}`},
+		// A `[table]` header defines the implicit table a deeper header
+		// made, once; a dotted key extends the table a header made, and a
+		// header defines a NEW sub-table under a table a dotted key made.
 		{"[a.b]\nc = 1\n[a]\nd = 2", `{"a":{"b":{"c":1},"d":2}}`},
-		{"[a]\nb.c = 1\n[a.b]\nd = 2", `{"a":{"b":{"c":1,"d":2}}}`},
+		{"[a.b.c]\n[a.b]\n[a]", `{"a":{"b":{"c":{}}}}`},
+		{"[[a.b]]\n[a]", `{"a":{"b":[{}]}}`},
+		{"[a]\nb.c = 1\n[a.b.d]\ne = 2", `{"a":{"b":{"c":1,"d":{"e":2}}}}`},
 		// Through an array of tables to its last element.
 		{"[[x]]\ny = 1\n[x.z]\nw = 2", `{"x":[{"y":1,"z":{"w":2}}]}`},
 		{"[[a]]\n[[a]]\n[a.b]\nc = 1", `{"a":[{},{"b":{"c":1}}]}`},
-		// A table defined twice passes through, as it does in TypeScript.
-		{"[a]\n[a]", `{"a":{}}`},
 	}
 	for _, c := range cases {
 		v, err := Parse(c.src)

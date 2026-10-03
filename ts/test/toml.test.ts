@@ -425,6 +425,20 @@ describe('toml', () => {
       '[[fruit]]\nname = "apple"\n[[fruit.variety]]\n' +
       'name = "red delicious"\n[fruit.variety]\nname = "granny smith"',
       '[[x]]\na = 1\n[x]\nb = 2',
+
+      // The four shapes every port accepted until 2026-10-03: a key given a
+      // second value (the base grammar's rule, last wins and tables merged,
+      // is relaxed JSON's and not TOML's), the same inside an inline
+      // table, a header written twice, and a header for a table a dotted
+      // key had defined. None of these crashed or lost data; they built
+      // a value TOML says does not exist.
+      'a = 1\na = 2',
+      'a.b = 1\na.b = 2',
+      'a = {b = 1, b = 2}',
+      '[a]\n[a]',
+      'a.b = 1\n[a]\nc = 2',
+      '[a]\nb.c = 1\n[a.b]\nd = 2',
+      'a = {}\n[a]',
     ]
     for (const src of conflicts) {
       let caught: any = null
@@ -445,11 +459,16 @@ describe('toml', () => {
     // Controls. Descending into an existing TABLE, or into the last element
     // of an existing array-of-tables, is legitimate and must NOT read as a
     // conflict: four valid corpus documents do exactly this, and a first cut
-    // of the check rejected all four.
+    // of the check rejected all four. A header may define the table its own
+    // prefix created, once, and a new sub-table under a table a dotted key
+    // made.
     const allowed: [string, any][] = [
       ['a = {b = 1, c = 2}', { a: { b: 1, c: 2 } }],
       ['a = {b.c = 1, b.d = 2}', { a: { b: { c: 1, d: 2 } } }],
       ['[[x]]\ny = 1\n[x.z]\nw = 2', { x: [{ y: 1, z: { w: 2 } }] }],
+      ['[a.b]\nc = 1\n[a]\nd = 2', { a: { b: { c: 1 }, d: 2 } }],
+      ['[[a.b]]\n[a]', { a: { b: [{}] } }],
+      ['[a]\nb.c = 1\n[a.b.d]\ne = 2', { a: { b: { c: 1, d: { e: 2 } } } }],
     ]
     for (const [src, want] of allowed) {
       equal(norm(toml.parse(src)), want,
