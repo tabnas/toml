@@ -79,6 +79,13 @@ a = {}\n[a]	ERROR:toml_key_conflict
 [[p.arr]]\n[p]\nnot-arr = 1\narr = 2	ERROR:toml_key_conflict
 [t.n]\ni = {n = {}}\n[t]\nn.i.n = 2	ERROR:toml_key_conflict
 [x.a.b]\n[x]\na.c = 1\n[x.a]	ERROR:toml_key_conflict
+# Only a key's FIRST segment is checked against the table: a later one
+# writes below the top level. A dotted key is a replace loop
+# (tabnas/toml#78), so its later segments have the first one's parent
+# rule, and the check asks only of a key's first segment. These valid
+# documents pin that: a later segment names a key the table holds.
+[t.y]\n[t]\nx.y.z = 1	{"t":{"y":{},"x":{"y":{"z":1}}}}
+[[t.y]]\n[t]\nx.y.z = 1	{"t":{"y":[{}],"x":{"y":{"z":1}}}}
 #
 # A value used again as a table: through a header, a dotted header, and a
 # dotted key in an inline table.

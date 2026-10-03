@@ -212,3 +212,119 @@ test('a long dotted header builds every table it names', () => {
       error.message.includes('cannot define x, it already has the value 1'),
   )
 })
+
+// A dotted key is a replace loop (tabnas/toml#78): each segment ending in a
+// dot re-enters `dive` in the same frame, so the engine's rule depth `d`
+// stays what one segment needs however long the key. It used to push a dive
+// per segment, so `d` was the segment count plus two, 10,002 for ten
+// thousand segments, past the 3,000 open rules aless allows a parse. Read
+// through a rule subscriber; a header, which was always a loop, is the
+// control. Mirrors TestDottedKeyRuleDepthIsConstant in go/perf_test.go and
+// a_dotted_key_keeps_rule_depth_constant in rs/tests/perf_test.rs.
+test('a dotted key keeps rule depth constant', () => {
+  const deepest = (src: string) => {
+    const toml = new Tabnas().use(jsonic).use(Toml)
+    let max = 0
+    toml.sub({ rule: (r: any) => { if (r.d > max) max = r.d } })
+    toml.parse(src)
+    return max
+  }
+  const key = (n: number) => Array(n).fill('a').join('.') + ' = 1'
+  const header = (n: number) => '[' + Array(n).fill('a').join('.') + ']\nx = 1'
+  const two = deepest(key(2))
+  const many = deepest(key(10000))
+  assert.strictEqual(
+    many,
+    two,
+    `ten thousand segments reach rule depth ${many}, where two reach ${two}: ` +
+      `the dive is a push chain again`,
+  )
+  assert.strictEqual(deepest(header(10000)), deepest(header(2)))
+})
+
+// A dotted key takes time in proportion to its number of segments. This
+// runtime hands each segment the table the previous one reached, as
+// r.prev.node, which is constant work; the Rust port used to walk the tree
+// from its root on every segment (tabnas/toml#78). Measured as 'a dotted
+// header takes time in proportion to its length' is. Mirrors
+// TestDottedKeyIsLinear in go/perf_test.go and
+// a_dotted_key_takes_time_in_proportion_to_its_length in
+// rs/tests/perf_test.rs.
+test('a dotted key takes time in proportion to its length', () => {
+  const key = (n: number) => Array(n).fill('a').join('.') + ' = 1\n'
+  const short = 2000
+  const toml = new Tabnas().use(jsonic).use(Toml)
+  const time = (src: string) => {
+    let best = Infinity
+    for (let run = 0; run < 5; run++) {
+      const t0 = process.hrtime.bigint()
+      toml.parse(src)
+      best = Math.min(best, Number(process.hrtime.bigint() - t0))
+    }
+    return best
+  }
+  const few = key(short)
+  const many = key(4 * short)
+  // Compile the hot paths before either measurement.
+  toml.parse(few)
+  toml.parse(many)
+
+  const seen: string[] = []
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const fewTime = time(few)
+    const manyTime = time(many)
+    const ratio = manyTime / Math.max(fewTime, 1)
+    seen.push(`${fewTime}ns and ${manyTime}ns (${ratio.toFixed(1)}x)`)
+    if (ratio <= 8) {
+      console.log(
+        `perf: ${short} segments=${fewTime}ns ${4 * short} segments=` +
+          `${manyTime}ns ratio=${ratio.toFixed(2)}x`,
+      )
+      return
+    }
+  }
+  assert.fail(
+    `a dotted key's parse time grows faster than its length: ${short} and ` +
+      `${4 * short} segments took ${seen.join(', then ')} (linear is about ` +
+      `4x, quadratic 16x). Something per segment is walking the path from ` +
+      `the root, copying it, or keeping a copy of it.`,
+  )
+})
+
+// A key thousands of segments long builds exactly the tables it names, and
+// later keys walk back down through them: one adds a value beside the first
+// key's last segment, one adds a table there, and one that treats a segment
+// holding a value as a table is refused, with the same diagnosis a short key
+// gets. Mirrors TestLongDottedKeyValue in go/perf_test.go and
+// a_long_dotted_key_builds_every_table_it_names in rs/tests/perf_test.rs.
+test('a long dotted key builds every table it names', () => {
+  const depth = 5000
+  const keys = Array.from({ length: depth }, (_, i) => `k${i}`)
+  const path = keys.join('.')
+  const prefix = keys.slice(0, -1).join('.')
+  const src = `${path} = 1\n${prefix}.y = 2\n${prefix}.z.w = 3\n`
+  const toml = new Tabnas().use(jsonic).use(Toml)
+
+  // Walked with a loop: a value 5,000 deep is not compared with the call
+  // stack.
+  let table: any = toml.parse(src)
+  for (let level = 0; level < depth - 1; level++) {
+    assert.deepStrictEqual(
+      Object.keys(table),
+      [`k${level}`],
+      `level ${level} holds k${level} and nothing else`,
+    )
+    table = table[`k${level}`]
+  }
+  assert.strictEqual(
+    JSON.stringify(table),
+    `{"k${depth - 1}":1,"y":2,"z":{"w":3}}`,
+  )
+
+  assert.throws(
+    () => toml.parse(`${src}${path}.q = 4\n`),
+    (error: any) =>
+      'toml_key_conflict' === error.code &&
+      error.message.includes(`cannot define k${depth - 1}, it already has the value 1`),
+  )
+})

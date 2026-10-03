@@ -53,6 +53,18 @@ fn table_array(rule: &Rule) -> bool {
     0 < rule.n.get("table_array").copied().unwrap_or(0)
 }
 
+/// Whether a dive that replaced `previous` continues the dotted key that
+/// rule began: it was reached by `r: dive` from a segment ending in a dot.
+/// A dive pushed by a pair or a map begins a key, and so does one reached
+/// through the close loop from a dive that ENDED a key (`dive_end`), which
+/// takes the next dotted key without returning to the pair. The depth
+/// guard asks the same question of a dive that has not run `@dive-bo` yet.
+pub(crate) fn continues_key(previous: Option<&Rc<RuleSnapshot>>) -> bool {
+    previous.is_some_and(|previous| {
+        "dive" == previous.name.as_ref() && !truthy(previous.u.get("dive_end"))
+    })
+}
+
 /// The end of every action that moves a table path. On success, record
 /// where the header now stands, then either leave its cursor for the next
 /// segment or, when `done` (the table's body follows), write out what the
@@ -79,7 +91,10 @@ fn conclude(
 
 /// The table a table body is merged into, when `rule` writes the TOP level
 /// of that body: a pair in the body's map, or the first segment of a dotted
-/// key there; `None` anywhere else. A table's body is parsed into a map of
+/// key there; `None` for a pair or a key anywhere else. A later segment of a
+/// dotted key writes below the top level, but in the dive's replace loop it
+/// has the first segment's parent, so `@dive-key-dot` asks only for a key's
+/// first segment ([`continues_key`]). A table's body is parsed into a map of
 /// its own (`@map-bo/append`) and merged into the table when the body ends
 /// (`@table-bc`), so a key the table already holds from an earlier header is
 /// not in the map the body's own checks read: `[a.b]` `c = 1` then `[a]`
@@ -188,9 +203,14 @@ fn register_state_actions(parser: &mut Tabnas) {
     // there the engine's own node inheritance says what its node is: the
     // parent's when the rule was pushed, the previous rule's when it was
     // replaced. A path has to be inherited explicitly to say the same
-    // thing.
+    // thing, and one replacement told apart from the other: a dotted key
+    // is a replace loop (tabnas/toml#78), so a dive replaced from a
+    // segment ending in a dot continues down that segment's table, and a
+    // dive replaced through the close loop, from a dive that ended a key,
+    // begins the next key from the parent's table again, as the
+    // canonical `@dive-key-dot` reads `r.prev.node` or `r.parent.node`.
     parser.state_action_ref("@dive-bo", |rule, _context| {
-        let path = if rule.prev_rule.is_some() {
+        let path = if continues_key(rule.prev_rule.as_ref()) {
             prev_path(rule)
         } else {
             parent_path(rule)
@@ -261,7 +281,8 @@ fn register_state_actions(parser: &mut Tabnas) {
 
 fn register_alt_actions(parser: &mut Tabnas) {
     // The five header actions move one `Cursor` along the header, segment
-    // by segment: each resumes the cursor the previous segment parked, and
+    // by segment, and `@dive-key-dot` below moves one along a dotted key:
+    // each resumes the cursor the previous segment parked, and
     // `conclude`s by parking it again, or by writing out what the header
     // created once the header is complete. See `node::Cursor`.
     parser.action_with_context("@table-dive-start", |rule, context| {
@@ -359,16 +380,29 @@ fn register_alt_actions(parser: &mut Tabnas) {
     // array passes and a value under that name is a conflict, exactly as
     // `[a.b]` would find it. A table it creates or walks through is one a
     // dotted key defined, which no later header may define again. At the
-    // top of a table body, the key may not be one the table already holds:
-    // `[a.b.c]` `z = 9` then `[a]` `b.c.t = 1` would replace `b` at the
-    // merge, losing `z`.
+    // top of a table body, a key's leading segment may not be one the table
+    // already holds: `[a.b.c]` `z = 9` then `[a]` `b.c.t = 1` would replace
+    // `b` at the merge, losing `z`. Only the leading segment is checked: a
+    // later one writes below the top level, and in the dive's replace loop
+    // it has the leading segment's parent, which is all `body_table` reads.
+    //
+    // The key moves one cursor along it as a header does, one segment at a
+    // time: each segment resumes the cursor the one before it parked at this
+    // rule's path (the parent's for the first segment, the previous
+    // segment's table after that, see `@dive-bo`), descends one table and
+    // parks it again. `@dive-bc` writes the key's value through `write_at`,
+    // which settles the cursor first. Each segment used to walk the tree
+    // from the cell's root, so a key cost time growing with the square of
+    // its length.
     parser.action_with_context("@dive-key-dot", |rule, context| {
         let key = key_of(rule, context);
-        body_conflict(rule, context, &key)?;
+        if !continues_key(rule.prev_rule.as_ref()) {
+            body_conflict(rule, context, &key)?;
+        }
         let cell = cell_of(rule);
-        let mut cursor = Cursor::walk(context, &cell, parent_path(rule));
+        let mut cursor = Cursor::resume(context, &cell, path_of(rule));
         let outcome = cursor.table_at(context, &key, Reach::Dive);
-        conclude(rule, context, &cell, cursor, outcome, true)
+        conclude(rule, context, &cell, cursor, outcome, false)
     });
 }
 
@@ -386,7 +420,6 @@ fn register_conditions(parser: &mut Tabnas) {
     parser.alt_condition("@lte-table-array-1", |rule, _context| {
         rule.lte("table_array", 1)
     });
-    parser.alt_condition("@lte-dive-key-1", |rule, _context| rule.lte("dive_key", 1));
     parser.alt_condition("@lte-pk", |rule, _context| rule.lte("pk", 0));
     parser.alt_condition("@map-is-table-parent", |rule, _context| {
         rule.parent_rule

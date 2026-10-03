@@ -12,10 +12,10 @@ mod common;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use tabnas::Value;
+use tabnas::{Tabnas, Value};
 use tabnas_toml::{
-    make, parse, plugin, toml, toml_time, TomlOptions, LOCAL_DATE, LOCAL_DATE_TIME, LOCAL_TIME,
-    OFFSET_DATE_TIME, VERSION,
+    make, parse, plugin, toml, toml_time, TomlOptions, DEPTH_GUARD, DEPTH_LIMIT, LOCAL_DATE,
+    LOCAL_DATE_TIME, LOCAL_TIME, OFFSET_DATE_TIME, VERSION,
 };
 
 use common::repo_dir;
@@ -284,6 +284,162 @@ fn string_error_columns_count_scalars_not_bytes() {
             error.col
         );
     }
+}
+
+// --- the depth guard -----------------------------------------------------
+
+/// The `n` segments of a dotted key or header, `a.a.….a`.
+fn segments(n: usize) -> String {
+    vec!["a"; n].join(".")
+}
+
+/// A document for a failure message, on one line, and its two ends only
+/// when it is long: these documents differ at the end more than the start.
+fn shown(src: &str) -> String {
+    let line: Vec<char> = src.replace('\n', "\\n").chars().collect();
+    if line.len() <= 60 {
+        return line.into_iter().collect();
+    }
+    let head: String = line[..30].iter().collect();
+    let tail: String = line[line.len() - 30..].iter().collect();
+    format!("{head} ... {tail} ({} chars)", line.len())
+}
+
+fn assert_parses(parser: &Tabnas, src: &str) {
+    if let Err(error) = parser.parse(src) {
+        panic!("{}: {error}", shown(src));
+    }
+}
+
+fn assert_refused(parser: &Tabnas, src: &str) {
+    let error = parser
+        .parse(src)
+        .err()
+        .unwrap_or_else(|| panic!("{}: must be refused", shown(src)));
+    assert_eq!("cancel", error.code, "{}", shown(src));
+}
+
+/// Nesting past `DEPTH_LIMIT` levels is refused with the engine's `cancel`
+/// code, whichever way a document nests (tabnas/toml#78): a dotted key, a
+/// header, an array of tables, an inline table, an array, or a mix of
+/// them. A level is a container the value sits in, the root table
+/// included, so a dotted key of n segments nests n levels and a header of
+/// n segments n + 1. TypeScript and Go have no limit, which
+/// `../test/divergent.tsv` records with the two smallest documents refused
+/// here; this test pins the boundaries, that width is not depth, that the
+/// shared default parser is guarded too, and that lifting the guard lifts
+/// every bound. jsonic's guard counted only its own containers, so an
+/// inline table and an array were bounded already and a dotted key of
+/// 10,000 segments parsed, at rule depth 10,002.
+#[test]
+fn nesting_is_bounded_by_the_depth_guard() {
+    assert_eq!(127, DEPTH_LIMIT, "the limit is jsonic's");
+    let parser = make();
+    let parses = |src: &str| assert_parses(&parser, src);
+    let refused = |src: &str| assert_refused(&parser, src);
+
+    // A dotted key of n segments nests n levels: the root table, and a
+    // table per segment but the last, which holds the value.
+    parses(&format!("{} = 1", segments(127)));
+    for n in [128, 129, 500, 10_000] {
+        refused(&format!("{} = 1", segments(n)));
+    }
+    // A header of n segments nests n + 1: its tables sit in the root. The
+    // header is refused at the segment past the limit, before its body
+    // opens and before any value past the limit is built.
+    parses(&format!("[{}]\nx = 1", segments(126)));
+    refused(&format!("[{}]\nx = 1", segments(127)));
+    refused(&format!("[{}]", segments(127)));
+    refused(&format!("[{}]", segments(10_000)));
+    // An array of tables holds its element in an array: one level more.
+    parses(&format!("[[{}]]\nx = 1", segments(125)));
+    refused(&format!("[[{}]]\nx = 1", segments(126)));
+    // A dotted key counts from the table it is in.
+    parses(&format!("[{}]\n{} = 1", segments(100), segments(27)));
+    refused(&format!("[{}]\n{} = 1", segments(100), segments(28)));
+    // An array and an inline table are a level each. In the root table
+    // they are bounded where jsonic's guard, which this one replaces,
+    // bounded them: 126 nest 127 levels with the root.
+    let arrays = |n: usize| format!("x = {}{}", "[".repeat(n), "]".repeat(n));
+    parses(&arrays(126));
+    refused(&arrays(127));
+    let tables = |n: usize| format!("x = {}1{}", "{a = ".repeat(n), "}".repeat(n));
+    parses(&tables(126));
+    refused(&tables(127));
+    // A dotted key inside an inline table counts on from the key the table
+    // is the value of: `a.a = {` is two levels a time.
+    let inline = |n: usize| format!("{}a = 1{}", "a.a = {".repeat(n), "}".repeat(n));
+    parses(&inline(63));
+    refused(&inline(64));
+    // Width is not depth: ten thousand dotted keys side by side, through
+    // the dive's close loop.
+    let wide: Vec<String> = (0..10_000).map(|i| format!("k{i}.a = {i}")).collect();
+    parses(&wide.join("\n"));
+    // The shared default parser is guarded too.
+    assert_eq!(
+        "cancel",
+        parse(&format!("{} = 1", segments(10_000)))
+            .unwrap_err()
+            .code
+    );
+    // A caller that lifts the guard, by name, parses what it asked for,
+    // and lifts jsonic's bound on arrays and inline tables with it: this
+    // guard replaced that one under the same name, so none is left.
+    let mut lifted = make();
+    lifted.remove_parse_guard(DEPTH_GUARD);
+    lifted
+        .parse(&format!("{} = 1", segments(300)))
+        .expect("the guard was lifted");
+    lifted
+        .parse(&arrays(300))
+        .expect("no bound is left on arrays");
+    lifted
+        .parse(&tables(300))
+        .expect("no bound is left on inline tables");
+}
+
+/// A dotted key in an inline table counts on from the keys outside it,
+/// whichever way the parse reaches it. A key after a comma begins with a
+/// new `pair`, but one after a newline or a space is taken by the dive's
+/// close loop, in the frame of the key before it, and the guard once
+/// counted such a key from the inline table, dropping the tables of every
+/// key further out: two keys of 100 segments, one in the other's value,
+/// parsed at 200 levels, and 26 levels of 99-segment keys built a value
+/// 2,576 deep whose display ended the process. The test above never takes
+/// the close loop inside an inline table.
+#[test]
+fn a_key_the_close_loop_takes_counts_from_the_keys_outside() {
+    let parser = make();
+    let parses = |src: &str| assert_parses(&parser, src);
+    let refused = |src: &str| assert_refused(&parser, src);
+
+    // A key of 100 segments and its inline table nest 101 levels, the
+    // root included, and a key of n segments inside that table n - 1 more.
+    let outer = segments(100);
+    for between in ["\n", " ", ", "] {
+        let inner = |n: usize| format!("{outer} = {{p.q = 1{between}{} = 1}}", segments(n));
+        parses(&inner(27));
+        refused(&inner(28));
+        refused(&inner(100));
+    }
+    // Every level counts: four keys of 25 segments, each with its inline
+    // table and on a new line of the one before, nest 101 levels, and a
+    // key of n segments on a new line of the last n - 1 more.
+    let nested = |n: usize| {
+        format!(
+            "{}{} = 1{}",
+            format!("{} = {{p.q = 1\n", segments(25)).repeat(4),
+            segments(n),
+            "}".repeat(4)
+        )
+    };
+    parses(&nested(27));
+    refused(&nested(28));
+    // So does a key whose value is an array: the root, `k.k`, the array
+    // and the inline table in it nest four levels.
+    let in_array = |n: usize| format!("k.k = [{{p.q = 1\n{} = 1}}]", segments(n));
+    parses(&in_array(124));
+    refused(&in_array(125));
 }
 
 /// Rows after a multi-line string (tabnas/toml#85). A multi-line string

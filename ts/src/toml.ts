@@ -150,18 +150,21 @@ const grammarText = `
     { s: ['#CA' '#CS'] b: 1 g: comma }
   ]
 
+  # A dotted key is a replace loop, as a dotted header is: each segment
+  # ending in a dot re-enters dive in the same frame (r), so rule depth
+  # stays what one segment needs however long the key, and only the value
+  # nests. The loop at the close takes the next dotted key without
+  # returning to the pair, and begins it from the table that holds both.
   rule: dive: {
     open: [
       {
         s: ['#ST #NR #ID' '#DOT']
-        p: dive
-        n: { dive_key: 1 }
+        r: dive
         a: '@dive-key-dot'
       }
       {
         s: ['#ST #NR #ID' '#CL']
         p: val
-        n: { dive_key: 1 }
         u: { dive_end: true }
       }
     ]
@@ -170,8 +173,6 @@ const grammarText = `
         s: ['#ST #NR #ID' '#DOT']
         b: 2
         r: dive
-        c: '@lte-dive-key-1'
-        n: { dive_key: 0 }
       }
       {}
     ]
@@ -209,6 +210,14 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
     { key, why: `it already has the value ${JSON.stringify(existing)}` },
     r.o0, r, ctx)
 }
+
+// Whether this dive continues the dotted key the dive before it began: it
+// was reached by `r: dive` from a `key .` segment. A dive pushed by a pair
+// or a map begins a key, and so does one reached through the close loop
+// from a dive that ENDED a key (dive_end), which takes the next dotted key
+// without returning to the pair.
+const continuesKey = (r: any) =>
+  'dive' === r.prev.name && !r.prev.u.dive_end
 
 // What a segment asks of the table under its key.
 //
@@ -352,8 +361,10 @@ function tableAt(
 // table while its body is parsed, so checking a key against it here, where
 // the key's token is in hand, is checking it at the merge, and the refusal
 // points at the key, as every pair conflict does. Undefined for a pair or a
-// dotted key in an inline table, whose map is the value itself, and for a
-// later segment of a dotted key, which writes below the top level.
+// dotted key in an inline table, whose map is the value itself. A later
+// segment of a dotted key writes below the top level, but in the dive's
+// replace loop it has the leading segment's parent, so `@dive-key-dot` asks
+// only for a key's leading segment (`continuesKey`).
 function bodyTable(r: any): any {
   const map = 'pair' === r.parent?.name ? r.parent.parent : r.parent
   return 'map' === map?.name && 'table' === map.parent?.name
@@ -654,22 +665,36 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       r.u.key = r.o0.val
     },
 
-    // A dotted key's leading segment. At the top of a table body, the key
-    // may not be one the table already holds: `[a.b.c]` `z = 9` then `[a]`
-    // `b.c.t = 1` would replace `b` at the merge, losing `z`.
+    // A dotted key is a replace loop (tabnas/toml#78): each `key .`
+    // segment re-enters `dive` in the same frame, so rule depth stays what
+    // one segment needs however long the key. The first segment descends
+    // from the table the key is in, the parent's node; each later one from
+    // the table the segment before it reached, handed on as r.prev.node
+    // when the dive replaced itself, exactly as @table-dive-mid reads a
+    // header's. It used to push a dive per segment, so rule depth grew
+    // with the key: 10,002 for ten thousand segments.
+    //
+    // At the top of a table body, a key's leading segment may not be one
+    // the table already holds: `[a.b.c]` `z = 9` then `[a]` `b.c.t = 1`
+    // would replace `b` at the merge, losing `z`. Only the leading segment
+    // is checked: a later one writes below the top level, and in the loop
+    // it has the leading segment's parent, which is all `bodyTable` reads.
     '@dive-key-dot': (r: any, ctx: any) => {
-      const table = bodyTable(r)
-      if (table) {
-        redefines(table, r.o0.val, r, ctx)
+      const begins = !continuesKey(r)
+      if (begins) {
+        const table = bodyTable(r)
+        if (table) {
+          redefines(table, r.o0.val, r, ctx)
+        }
       }
-      r.node = tableAt(r.parent.node, r.o0.val, r, ctx, DIVE)
+      const from = begins ? r.parent.node : r.prev.node
+      r.node = tableAt(from, r.o0.val, r, ctx, DIVE)
     },
 
     // Conditions.
     '@table-top-dive-cond': (r: any) => 1 === r.d && 'table' !== r.prev.name,
     '@lte-table-dive': (r: any) => r.lte('table_dive'),
     '@lte-table-array-1': (r: any) => r.lte('table_array', 1),
-    '@lte-dive-key-1': (r: any) => r.lte('dive_key', 1),
     '@lte-pk': (r: any) => r.lte('pk'),
     '@map-is-table-parent': (r: any) => 'table' === r.parent.name,
 

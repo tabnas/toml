@@ -9,20 +9,20 @@ only covers what is specific to this crate.
 
 | Path | |
 |---|---|
-| `src/lib.rs` | the embedded grammar, the document adjustments, `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION`, and the translation parts `manifest_text` and `render_text`, `include_str!` of the copies in `translate/` |
+| `src/lib.rs` | the embedded grammar, the document adjustments, the depth guard (`DEPTH_LIMIT`, `DEPTH_GUARD`) and the unit tests of its kept count, `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION`, and the translation parts `manifest_text` and `render_text`, `include_str!` of the copies in `translate/` |
 | `src/refs.rs` | every `@`-named reference the grammar uses: state actions, alternate actions, conditions, conditional `p:`/`r:` targets |
-| `src/node.rs` | table nodes as PATHS (see below), the cursor that keeps a dotted header linear, and the key-conflict diagnosis |
+| `src/node.rs` | table nodes as PATHS (see below), the cursor that keeps a dotted header and a dotted key linear, and the key-conflict diagnosis |
 | `src/strmatcher.rs` | TOML's basic, literal and multi-line strings |
 | `src/datematcher.rs` | the context-aware date and time matchers, and the leading-BOM matcher |
 | `src/daterange.rs` | whether a date or time whose SHAPE matched denotes a real instant |
 | `src/values.rs` | `TomlTime`, and how it rides on a `tabnas::Value` |
 | `translate/` | the crate's copies of `../tabnas.plugin.json` (as `manifest.json`) and `../alchemy/render.alc`, which a packaged crate needs; `tests/translate_test.rs` holds them to the files |
 | `tests/parity_test.rs` | every `../test/spec/*.tsv` fixture, discovered by listing |
-| `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns, key conflicts, the canonical message templates, the embedded grammar, threads |
+| `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns and rows, key conflicts, the depth guard, the canonical message templates, the embedded grammar, threads |
 | `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
 | `tests/translate_test.rs` | the translation parts: the render the embedded manifest names is the one `render_text()` embeds, the manifest's shapes and loss lines, and every render definition named `toml-...` |
-| `tests/perf_test.rs` | `parse` reuses its instance; a parse, and a dotted header, take time in proportion to their length; a header 5,000 segments deep |
+| `tests/perf_test.rs` | `parse` reuses its instance; a parse, a dotted header and a dotted key take time in proportion to their length; a header and a key 5,000 segments deep; a key keeps rule depth constant over 10,000 segments |
 | `tests/version_test.rs` | Cargo.toml == `VERSION` == ts/package.json |
 | `tests/common/mod.rs` | shared helpers: spec dir, repo dir, value and failure conversion |
 | `README.md` | the crate front page, prose-gated; its `rust` fences are doctests of this crate |
@@ -167,18 +167,129 @@ code fails it within a minute and a half, in a debug build as in a release
 one, because the long header is parsed against a deadline), and
 `a_long_dotted_header_builds_every_table_it_names` pins the value and the
 diagnosis of headers 5,000 segments deep. Both mirror tests in the other
-two ports. Dotted KEYS (`a.b.c = 1`, the `dive` rule) still walk from the
-root on every segment, through `Cursor::walk`: they are a push chain, which
-is tabnas/toml#78, and making the key linear belongs with that change.
+two ports, and both lift the depth guard (next section) first: they
+measure the algorithm, which has to be linear whatever the limit is.
+
+## A dotted key is the same loop, and parks on a stack
+
+A dotted key (`a.b.c = 1`, the `dive` rule) used to be a push chain, a
+`dive` pushed per segment, so rule depth grew with the key, 10,002 for
+ten thousand segments, and each segment walked the tree from the cell's
+root, so a key cost time growing with the square of its length
+(tabnas/toml#78). The grammar now re-enters `dive` in the same frame per
+segment, as `table` does for a header, and `@dive-key-dot` moves the same
+`Cursor` the header actions move: it resumes the cursor the previous
+segment parked at this rule's path, descends one table and parks it again,
+and `@dive-bc` writes the key's value through `write_at`, which settles
+the cursor first.
+
+Two things differ from the header. `@dive-bo` has to tell the two ways a
+dive is replaced apart: from a segment ending in a dot it inherits the
+previous segment's path (`continues_key`), and from the close loop, which
+takes the next dotted key without returning to the pair, it starts from
+the parent's path again, as the canonical `@dive-key-dot` reads
+`r.prev.node` or `r.parent.node`. And the parked cursors are a STACK in
+the context's `u` bag (`PARKED_KEY`), not a slot: a key's value can be an
+inline table whose own dotted keys park a cursor each before the outer key
+is done (`x.y = {p.q = {m.n = 1}}`), and with one slot the inner key
+clobbered the outer, whose tables were then never written. `settle` and
+`Cursor::resume` take the cursor parked last and put it back when it is
+parked on another cell. `a_dotted_key_keeps_rule_depth_constant`,
+`a_dotted_key_takes_time_in_proportion_to_its_length` and
+`a_long_dotted_key_builds_every_table_it_names` are the proof, mirrored in
+both other ports, and the fixture rows in `../test/spec/dotted-keys.tsv`
+walk the loop and the nested inline tables in every runtime.
+
+## Nesting is bounded at 127 levels
+
+`toml()` installs a parse guard under the name `depth`, the name jsonic
+installs its own under, so this one replaces it, as YAML's does. jsonic's
+counts its `map` and `list` rules, which is every inline table, every array
+and every table's body, but a header and a dotted key nest through `table`
+and `dive`, which it never saw, so a key of 10,000 segments parsed.
+`DEPTH_LIMIT` levels parse and the next one is refused with the engine's
+`cancel`, as every grammar in the fleet refuses depth in Rust (aless reads
+that `cancel` as `too_deep`, and the transducer as `INPUT_INVALID` naming
+the grammar's guard). TypeScript and Go have no limit, and the two rows of
+`../test/divergent.tsv` record it as permanent.
+
+`depth` (in `lib.rs`) counts the root table and what each rule adds: every
+rule on the stack (`frame_levels`), and the rule the loop is working on
+(`current_levels`), which the engine hands over apart from the stack. A
+`map` or a `list` adds one, except a `map` directly above a `table`, which
+is that table's body and sits INSIDE the table at the end of its path. A
+`table` or a `dive` adds the length of its path, kept in `u`.
+
+**A dive is counted by its path, never by a counter.** A dive's path
+counts the tables its key has descended through from the table the key is
+in, so every dotted key still open counts, each from where the one outside
+it left off. The first cut of this guard read a `dive_key` counter off the
+current rule instead, which every rule under a dive inherited, and the
+dive's close loop, which takes the next dotted key in the same frame and
+has to begin it from the table it is in, reset that counter to zero. Inside
+an inline table that is the value of another key, the reset dropped the
+OUTER key's tables too: `k0.….k99 = {p.q = 1`, a newline and
+`b0.….b99 = 1}`, which this grammar accepts, parsed at 200 levels, and 26
+levels of 99-segment keys built a value 2,576 deep whose display ended the
+process with a stack overflow. A key after a comma begins with a new
+`pair`, which inherited the count, so only the newline and space forms got
+through. The counter is gone from the grammar, since nothing reads it, and
+`a_key_the_close_loop_takes_counts_from_the_keys_outside` in
+`tests/toml_test.rs` pins those shapes.
+
+The current rule is the one place a path says nothing yet: the engine runs
+the guard before any of the step's actions, and a replacement inherits
+counters but not `u`. A `table` that is the current rule is still reading
+its header, one segment per replacement, so the `table_dive` counter, plus
+one for the segment being read, says how deep the header has got. A `dive`
+that is the current rule and still open has not run `@dive-bo`: it stands
+where the segment it replaced left off when it continues a key
+(`continues_key`, the question `@dive-bo` asks), and at nothing when it
+begins one. That is what refuses a header or a key AT the segment past the
+limit, before any value past it is built; read the paths there and a
+10,000-segment header is parsed to its end, written into the tree 10,000
+deep, and only then refused, with the deep value left to drop.
+
+The count over the stack is KEPT from one step to the next
+(`levels_on_stack`), as jsonic keeps its own (tabnas/jsonic#91): a frame's
+levels depend on it and the frame below it alone, the engine changes the
+stack only at the top, and a step recounts from the first position whose
+rule id changed. Recounting the whole stack at every step, as the first cut
+did, made 2,000 lines of arrays or inline tables nested 120 deep take 20
+to 28 percent longer than under jsonic's guard in a release build; kept,
+they take what they took there. Two unit tests in `lib.rs` hold it:
+`the_kept_count_is_the_walked_count_at_every_step` compares it with a walk
+at every step, and `a_step_counts_what_changed_not_the_whole_stack` counts
+the frames a step looks at.
+
+The boundaries, in container terms: a dotted key of 127 segments parses
+and 128 is refused (the root table is a level, so n segments nest n
+levels); a header of 126 parses and 127 is refused (its tables sit in the
+root); an array of tables is one level more; an inline table or an array
+in the root table stops at 126, where jsonic's guard stopped it.
+`nesting_is_bounded_by_the_depth_guard` in `tests/toml_test.rs` pins them,
+with the mixed cases, width against depth, and the shared default parser.
+
+**Lifting the guard lifts every bound.** A caller that wants the depth
+calls `remove_parse_guard(DEPTH_GUARD)`, and because this guard replaced
+jsonic's under the same name, nothing is left: not the bound on headers
+and dotted keys this guard adds, and not the one jsonic's guard kept on
+inline tables and arrays either. 127 nested arrays, which jsonic's guard
+refused, parse, and so do 10,000. The caller drops the value on a stack
+that can take it, which is what the perf tests do.
 
 ## Two lifecycle actions that are not where the canonical ones are
 
 **`@dive-bo` has no canonical counterpart.** There, the engine's own node
 inheritance says what a pushed or replaced `dive` rule's node is: the
 parent's when it was pushed, the previous rule's when it was replaced. A
-path has to be inherited explicitly to say the same thing, and
-`rule.prev_rule.is_some()` is exactly "this rule was created by a
-replace" (the engine sets `prev_rule` only on that path).
+path has to be inherited explicitly to say the same thing, and the engine
+sets `prev_rule` only on a replace. A dive is replaced in two ways, and
+`continues_key` tells them apart: from a segment ending in a dot, which
+continues down the previous segment's table, and from the close loop,
+from a dive that ended a key (`dive_end`), which begins the next key from
+the parent's table again, as the canonical `@dive-key-dot` reads
+`r.prev.node` or `r.parent.node`.
 
 **`@table-ac` is done in `@table-bc`.** The canonical handler writes
 `next.n.table_dive = 0` on the rule the parser moves to next. Here `next`

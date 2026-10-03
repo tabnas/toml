@@ -229,17 +229,36 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// passes and a value under that name is a conflict, exactly as
 		// `[a.b]` would find it. A table it creates or walks through is
 		// one a dotted key defined, which no later header may define
-		// again. At the top of a table body, the key may not be one the
-		// table already holds: `[a.b.c]` `z = 9` then `[a]` `b.c.t = 1`
-		// would replace `b` at the merge, losing `z`.
+		// again. At the top of a table body, a key's leading segment may
+		// not be one the table already holds: `[a.b.c]` `z = 9` then `[a]`
+		// `b.c.t = 1` would replace `b` at the merge, losing `z`. Only the
+		// leading segment is checked: a later one writes below the top
+		// level, and in the loop below it has the leading segment's parent,
+		// which is all bodyTable reads.
+		//
+		// A dotted key is a replace loop (tabnas/toml#78): each `key .`
+		// segment re-enters `dive` in the same frame, so rule depth stays
+		// what one segment needs however long the key. The first segment
+		// descends from the table the key is in, the parent's node; each
+		// later one from the table the segment before it reached, handed
+		// on as r.Prev.Node when the dive replaced itself, exactly as
+		// @table-dive-mid reads a header's. It used to push a dive per
+		// segment, so rule depth grew with the key.
 		"@dive-key-dot": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
 			key := tokenString(r.O0)
-			parent, ok := asMap(r.Parent.Node)
+			begins := !continuesKey(r)
+			from := r.Parent.Node
+			if !begins {
+				from = r.Prev.Node
+			}
+			parent, ok := asMap(from)
 			if !ok {
 				return
 			}
-			if table := bodyTable(r); table != nil {
-				redefines(table, key, r.O0)
+			if begins {
+				if table := bodyTable(r); table != nil {
+					redefines(table, key, r.O0)
+				}
 			}
 			r.Node = tableAt(parent, key, ctx, DIVE)
 		}),
@@ -256,10 +275,6 @@ func makeRefs() map[jsonic.FuncRef]any {
 
 		"@lte-table-array-1": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
 			return r.Lte("table_array", 1)
-		}),
-
-		"@lte-dive-key-1": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
-			return r.Lte("dive_key", 1)
 		}),
 
 		"@lte-pk": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
@@ -286,6 +301,16 @@ func makeRefs() map[jsonic.FuncRef]any {
 			return ""
 		},
 	}
+}
+
+// continuesKey reports whether this dive continues the dotted key the dive
+// before it began: it was reached by `r: dive` from a `key .` segment. A
+// dive pushed by a pair or a map begins a key, and so does one reached
+// through the close loop from a dive that ENDED a key (dive_end), which
+// takes the next dotted key without returning to the pair.
+func continuesKey(r *jsonic.Rule) bool {
+	prev := r.Prev
+	return prev != nil && prev != jsonic.NoRule && prev.Name == "dive" && prev.U["dive_end"] == nil
 }
 
 // tokenString returns a token's value as a string.
@@ -465,7 +490,10 @@ func tableAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context, how 
 
 // bodyTable is the table a table body is merged into, when r writes the
 // TOP level of that body: a pair in the body's map, or the first segment of
-// a dotted key there; nil anywhere else. A table's body is parsed into a
+// a dotted key there; nil for a pair or a key anywhere else. A later
+// segment of a dotted key writes below the top level, but in the dive's
+// replace loop it has the first segment's parent, so @dive-key-dot asks only
+// for a key's first segment (continuesKey). A table's body is parsed into a
 // map of its own and merged into the table when the body ends (@table-bc),
 // so a key the table already holds from an earlier header is not in the
 // map the body's own checks read: `[a.b]` `c = 1` then `[a]` `b = 2`

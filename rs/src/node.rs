@@ -1,7 +1,7 @@
 // Copyright (c) 2021-2026 Richard Rodger and other contributors, MIT License
 
 //! Table nodes as PATHS into a shared cell, and the cursor that keeps a
-//! dotted header linear in its length.
+//! dotted header, and a dotted key, linear in its length.
 //!
 //! The canonical TypeScript grammar hands a table rule a REFERENCE to a
 //! nested object (`r.node = r.parent.node[key]`) and then lets the pairs
@@ -28,9 +28,9 @@
 //!   a full copy of its segments in the rule's `u` bag, rebuilt on every
 //!   segment, and the engine keeps every rule a replace loop passes
 //!   through, so a header of n segments held n paths of up to n segments.
-//! - A header moves through the tree with a [`Cursor`] instead of
-//!   walking from the cell's root once or twice per segment. See there
-//!   for how it stays exact.
+//! - A header, and a dotted key, move through the tree with a [`Cursor`]
+//!   instead of walking from the cell's root once or twice per segment.
+//!   See there for how it stays exact.
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -51,9 +51,12 @@ pub(crate) const PATH_KEY: &str = "toml_path";
 /// Where the parse keeps its path buffers, in the context's `u` bag.
 const PATHS_KEY: &str = "toml_paths";
 
-/// Where a header's cursor waits between two segments, in the context's
-/// `u` bag.
-const HEADER_KEY: &str = "toml_header";
+/// Where the cursors parked between two segments wait, in the context's
+/// `u` bag: a stack, the cursor parked last on top. A header parks one at
+/// a time, but a dotted key's value can hold an inline table whose own
+/// dotted keys park a cursor of their own before the outer key is done,
+/// so the outer one waits underneath until the inner ones have finished.
+const PARKED_KEY: &str = "toml_parked";
 
 /// Where the parse keeps the tables a header's prefix created and no header
 /// has yet defined, in the context's `u` bag: the only existing tables a
@@ -91,6 +94,12 @@ pub(crate) struct Path {
 impl Path {
     /// The cell's own value.
     pub(crate) const ROOT: Path = Path { id: 0, len: 0 };
+
+    /// How many segments the path has: the tables and array positions it
+    /// descends through from the cell's value.
+    pub(crate) fn len(self) -> usize {
+        self.len
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -489,8 +498,9 @@ struct Pending {
     last: Fresh,
 }
 
-/// A cursor that moves a table header through the tree one segment at a
-/// time, so a header of n segments costs O(n) rather than O(n^2).
+/// A cursor that moves a table header, or a dotted key, through the tree
+/// one segment at a time, so one of n segments costs O(n) rather than
+/// O(n^2).
 ///
 /// Every segment of a header looks a key up in the node the previous
 /// segment reached, and in the canonical grammar it is handed that node
@@ -538,14 +548,10 @@ fn cell_id(cell: &Cell) -> usize {
 }
 
 impl Cursor {
-    /// A cursor on `path`, found by walking the cell's tree from its root.
-    pub(crate) fn walk(context: &mut Context, cell: &Cell, path: Path) -> Cursor {
-        settle(context, cell);
-        Cursor::find(context, cell, path)
-    }
-
-    /// The cursor the previous segment of this header parked, when it is
-    /// on `path`; otherwise one found by walking.
+    /// The cursor the previous segment of this header or key parked, when
+    /// it is on `path`; otherwise one found by walking. A cursor parked on
+    /// another cell belongs to a key further out, whose value this one is
+    /// inside, and is left where it is.
     pub(crate) fn resume(context: &mut Context, cell: &Cell, path: Path) -> Cursor {
         if let Some(parked) = take_parked(context) {
             if parked.cell != cell_id(cell) {
@@ -851,19 +857,23 @@ impl Cursor {
             number(last),
             number(self.trie),
         ]));
-        match context.u.get_mut(HEADER_KEY) {
-            Some(slot) => *slot = parked,
-            None => {
-                context.u.insert(HEADER_KEY.to_string(), parked);
+        match context.u.get_mut(PARKED_KEY) {
+            Some(Value::Array(stack)) => Arc::make_mut(stack).push(parked),
+            _ => {
+                context
+                    .u
+                    .insert(PARKED_KEY.to_string(), Value::Array(Arc::new(vec![parked])));
             }
         }
     }
 }
 
-/// The parked header, taken out of the context.
+/// The cursor parked last, taken out of the context.
 fn take_parked(context: &mut Context) -> Option<Cursor> {
-    let slot = context.u.get_mut(HEADER_KEY)?;
-    let Value::Array(parts) = std::mem::replace(slot, Value::Undefined) else {
+    let Some(Value::Array(stack)) = context.u.get_mut(PARKED_KEY) else {
+        return None;
+    };
+    let Value::Array(parts) = Arc::make_mut(stack).pop()? else {
         return None;
     };
     let mut parts = Arc::try_unwrap(parts).unwrap_or_else(|shared| (*shared).clone());
@@ -917,9 +927,10 @@ fn take_parked(context: &mut Context) -> Option<Cursor> {
     })
 }
 
-/// Write out a header parked on `cell`, before anything else reads or
-/// writes that cell's tree. A header parked on another cell is left where
-/// it is.
+/// Write out the cursor parked last, when it is parked on `cell`, before
+/// anything else reads or writes that cell's tree. One parked on another
+/// cell belongs to a key further out and is left where it is: its own
+/// write settles it once the value inside it is done.
 pub(crate) fn settle(context: &mut Context, cell: &Cell) {
     if let Some(parked) = take_parked(context) {
         if parked.cell == cell_id(cell) {

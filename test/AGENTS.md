@@ -57,7 +57,7 @@ audit found 29 recorded claims contradicted by execution.
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
 position; one that has it is compared on both.
 
-The register holds two classes of row today.
+The register holds three classes of row today.
 
 The first two rows are the **astral column unit**, and they are
 *permanent*: TypeScript counts UTF-16 code units, so an astral character
@@ -76,6 +76,17 @@ is what makes this a real question rather than a sweep: `"\u12g4"` is
 invalid TOML -- the format requires exactly four hexadecimal digits --
 so Go is the only one of the three that is right, and the two that move
 are TypeScript and Rust.
+
+The last two rows are the **depth guard**, and they are permanent like the
+astral rows: the Rust port refuses a document nested past 127 levels with
+the engine's `cancel`, through a parse guard of its own that counts every
+container the value sits in -- the inline tables and arrays jsonic's guard
+counted, and the tables a dotted key or a header nests through, which it
+never saw (tabnas/toml#78) -- where TypeScript and Go parse it. The `ts`
+and `go` cells hold the 128-level value, which is why those two rows are
+long. The exact boundaries are pinned in `rs/tests/toml_test.rs`; the rows
+are the shared record that the other two ports do not refuse them. Do not
+delete them on a sweep.
 
 Another class, the **position of a key conflict**, closed on 2026-10-03.
 TypeScript answered `1:1` for a header's conflict, raising on `ctx.t0`
