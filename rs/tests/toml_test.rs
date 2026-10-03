@@ -9,6 +9,7 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use tabnas::Value;
@@ -282,6 +283,166 @@ fn string_error_columns_count_scalars_not_bytes() {
              counting bytes.",
             error.col
         );
+    }
+}
+
+/// Rows after a multi-line string (tabnas/toml#85). A multi-line string
+/// trims the line feed right after its opening delimiter, and a
+/// line-ending backslash trims the one right after it; both are still
+/// lines of the source. The TypeScript and Go matchers own their row and
+/// column arithmetic and consumed each of those line feeds without
+/// counting a row, so every token and every diagnostic after such a string
+/// was reported one row early there, per multi-line string before it. This
+/// port hands the engine a count of characters and was right; the test
+/// keeps it so. Both other ports assert the same rows.
+#[test]
+fn rows_after_a_multi_line_string_count_its_trimmed_line_feeds() {
+    for (label, src, row, col) in [
+        // Control: a multi-line string that trims nothing.
+        ("no trim", "a = \"\"\"x\"\"\"\nb = ]", 2, 5),
+        ("basic", "a = \"\"\"\nx\"\"\"\nb = ]", 3, 5),
+        ("literal", "a = '''\nx'''\nb = ]", 3, 5),
+        // One row early PER string before the error.
+        (
+            "two strings",
+            "a = \"\"\"\nx\"\"\"\nb = \"\"\"\ny\"\"\"\nc = ]",
+            5,
+            5,
+        ),
+        // The line feed a line-ending backslash trims, then one it trims
+        // after that.
+        ("backslash", "a = \"\"\"\nx\\\n  y\"\"\"\nb = ]", 4, 5),
+        (
+            "backslash, blank line",
+            "a = \"\"\"\nx\\\n\n  y\"\"\"\nb = ]",
+            5,
+            5,
+        ),
+    ] {
+        let error = parse(src)
+            .err()
+            .unwrap_or_else(|| panic!("{label}: {src:?} parsed, expected a diagnostic"));
+        assert_eq!(
+            (error.row, error.col),
+            (row, col),
+            "{label}: {src:?} row:col"
+        );
+    }
+}
+
+/// The tokens themselves, as the lex trace a highlighter reads them: a
+/// string token's point is the cursor AFTER the string (see
+/// `strmatcher::end`), so it sits on the row the string ends on, and the
+/// token after it starts on the next row. The empty string carries its two
+/// quote characters as its source, as every other string token carries its
+/// text. TypeScript and Go assert the same six traces.
+#[test]
+fn string_tokens_carry_their_source_and_end_on_the_row_they_end_on() {
+    let trace = |src: &str| {
+        let mut parser = make();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        parser.subscribe_lex(move |token, _rule, _context| {
+            let name = token.name.as_str();
+            if "#ST" == name || "#ID" == name {
+                sink.lock().expect("the trace is whole").push(format!(
+                    "{name}{:?}@{}:{}",
+                    token.src.as_str(),
+                    token.site.ri,
+                    token.site.ci
+                ));
+            }
+        });
+        parser
+            .parse(src)
+            .unwrap_or_else(|error| panic!("{src:?}: {error}"));
+        let traced = seen.lock().expect("the trace is whole").join(" ");
+        traced
+    };
+    for (src, want) in [
+        (
+            "a = \"\"\"\nx\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"\nx\"\"\""@2:5 #ID"b"@3:1"#,
+        ),
+        (
+            "a = '''\nx'''\nb = 1",
+            r#"#ID"a"@1:1 #ST"'''\nx'''"@2:5 #ID"b"@3:1"#,
+        ),
+        (
+            "a = \"\"\"\nx\\\n  y\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"\nx\\\n  y\"\"\""@3:7 #ID"b"@4:1"#,
+        ),
+        ("a = \"\"\nb = 1", r#"#ID"a"@1:1 #ST"\"\""@1:7 #ID"b"@2:1"#),
+        ("a = ''\nb = 1", r#"#ID"a"@1:1 #ST"''"@1:7 #ID"b"@2:1"#),
+        ("\"\" = 1", r#"#ST"\"\""@1:3"#),
+    ] {
+        assert_eq!(trace(src), want, "{src:?}");
+    }
+}
+
+/// Columns after a multi-line string that ends with extra quotes. Up to
+/// two quotes after the closing delimiter belong to the value, so
+/// `"""x""""` is `x"`, and each is a column of the source too. The
+/// TypeScript and Go matchers own their column arithmetic and consumed
+/// those quotes without counting their columns, so everything after such
+/// a string was placed one column early per extra quote there. This port
+/// counts the token's characters and was right; the test keeps it so. The
+/// register row `a = '''x''''''''''''''`, 1:18 in the other two ports
+/// against 1:22 here, was that defect and not the engine's lookahead, and
+/// it closed with it. Both other ports assert the same positions and
+/// traces.
+#[test]
+fn columns_after_a_multi_line_string_count_its_extra_quotes() {
+    for (label, src, row, col) in [
+        // Control: no extra quote.
+        ("none", "a = \"\"\"x\"\"\" ]", 1, 13),
+        ("one", "a = \"\"\"x\"\"\"\" ]", 1, 14),
+        ("two", "a = \"\"\"x\"\"\"\"\" ]", 1, 15),
+        ("literal, one", "a = '''x'''' ]", 1, 14),
+        ("literal, two", "a = '''x''''' ]", 1, 15),
+    ] {
+        let error = parse(src)
+            .err()
+            .unwrap_or_else(|| panic!("{label}: {src:?} parsed, expected a diagnostic"));
+        assert_eq!(
+            (error.row, error.col),
+            (row, col),
+            "{label}: {src:?} row:col"
+        );
+    }
+
+    let trace = |src: &str| {
+        let mut parser = make();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        parser.subscribe_lex(move |token, _rule, _context| {
+            let name = token.name.as_str();
+            if "#ST" == name || "#ID" == name {
+                sink.lock().expect("the trace is whole").push(format!(
+                    "{name}{:?}@{}:{}",
+                    token.src.as_str(),
+                    token.site.ri,
+                    token.site.ci
+                ));
+            }
+        });
+        parser
+            .parse(src)
+            .unwrap_or_else(|error| panic!("{src:?}: {error}"));
+        let traced = seen.lock().expect("the trace is whole").join(" ");
+        traced
+    };
+    for (src, want) in [
+        (
+            "a = \"\"\"x\"\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"x\"\"\"\""@1:13 #ID"b"@2:1"#,
+        ),
+        (
+            "a = '''x'''''\nb = 1",
+            r#"#ID"a"@1:1 #ST"'''x'''''"@1:14 #ID"b"@2:1"#,
+        ),
+    ] {
+        assert_eq!(trace(src), want, "{src:?}");
     }
 }
 
