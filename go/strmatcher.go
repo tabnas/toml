@@ -54,9 +54,18 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 			isMultiline = true
 		}
 
-		// A newline immediately following the opening delimiter is trimmed.
+		// A newline immediately following the opening delimiter is trimmed
+		// from the VALUE, not from the source: it is still a line, so the
+		// row moves past it. This matcher owns its row and column
+		// arithmetic, and here it consumed the line feed without counting
+		// the row, so every token and every diagnostic after a multi-line
+		// string was reported one row early, per such string before it
+		// (tabnas/toml#85). The line feed a line-ending backslash trims,
+		// below, was consumed the same way. The Rust port hands the engine a
+		// count of characters and was right all along.
 		if isMultiline && sI+1 < srcLen && src[sI+1] == '\n' {
 			sI++
+			rI++
 			cI = 0
 		}
 
@@ -211,7 +220,14 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 				default:
 					if isMultiline && (esc == ' ' || esc == '\t' || esc == '\n' || esc == '\r') {
 						// Line-ending backslash: trim whitespace up to next
-						// non-whitespace.
+						// non-whitespace. The line feed right after the
+						// backslash was read above as the escaped character,
+						// so it is counted as a row here; the loop counts
+						// only the ones after it.
+						if esc == '\n' {
+							rI++
+							cI = 0
+						}
 						for sI+1 < srcLen {
 							n := src[sI+1]
 							switch n {
