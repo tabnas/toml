@@ -302,19 +302,6 @@ comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,
 delete the local comparator in all three halves together.
 
-## The remaining lookahead divergence is positional
-
-The engine now remembers a later `TIN_BD` token while matching alternates
-and preserves its diagnosis when none match. That closed two former rows
-of `../test/divergent.tsv` and the code difference in the third.
-
-One position difference remains. For
-`a = '''x''''''''''''''`, leftovers from the first literal string re-lex
-into a second `#ST`. TypeScript and Go report
-`unterminated_string@1:18`, while this port reports the same code at
-`1:22`, the re-lexed token's end. The register pins that position until
-the engines agree about which point represents this failure.
-
 ## The conformance suite never skips
 
 `tests/toml_valid_test.rs` runs `../scripts/fetch-toml-test.sh` itself

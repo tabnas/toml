@@ -57,7 +57,7 @@ audit found 29 recorded claims contradicted by execution.
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
 position; one that has it is compared on both.
 
-The register holds two classes of row today.
+The register holds three classes of row today.
 
 The first two rows are the **astral column unit**, and they are
 *permanent*: TypeScript counts UTF-16 code units, so an astral character
@@ -67,13 +67,6 @@ Rust counts Unicode scalar values, the same unit as a Go rune, so the
 here and three ports. Forced by the scan unit and recorded in
 `parser/DIVERGENCE.md`. Do not delete them on a sweep — nothing is going to
 close them.
-
-One row is a **bad token reached in lookahead**. The Rust engine repair now
-preserves the later bad token's code, which closed two former rows and the
-code difference in this one. Its reported position remains different for a
-literal-string value whose leftovers re-lex into another string: TypeScript
-and Go report the original failure point, while Rust reports the re-lexed
-token's end.
 
 One more row records a **lax hexadecimal escape**: `a = "\\u12g4"` reads
 as U+0012 in TypeScript and Rust, because the canonical scan accepts every

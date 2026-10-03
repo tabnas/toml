@@ -174,11 +174,6 @@ has no way to say what JavaScript says:
   requires exactly four hexadecimal digits, so `"\u12g4"` is not a TOML
   document and Go is the only one of the three that says so. The ports
   that move are TypeScript and this one.
-- **One re-lexed bad token has a different position.** The engine preserves
-  a later bad token's diagnosis. For one literal-string value whose
-  leftovers re-lex into another string, this port reports that token's end
-  while TypeScript and Go report the original failure point. The row in
-  [`../test/divergent.tsv`](../test/divergent.tsv) pins the difference.
 
 ## Build and test
 

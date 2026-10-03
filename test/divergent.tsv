@@ -54,16 +54,6 @@ input	ts	go	rust	why
 ["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
 ["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent
 #
-# --- A bad token reached in LOOKAHEAD: the reported position -------------
-# The Rust engine now preserves a later bad token's diagnosis, closing the
-# former code divergences for an unterminated quoted table key and a raw
-# newline in one. A value-context case still differs in POSITION: leftovers
-# from the first literal string re-lex into a second one, and Rust reports
-# that token's end while TypeScript and Go report the original failure point.
-#
-# MEASURED 2026-10-03 in all three ports against the sibling checkouts.
-a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:22	bad token in lookahead: Rust reports the re-lexed token end
-#
 # --- A string escape where the three ports are not unanimous -------------
 # `\u12g4` is a lax hexadecimal scan. The canonical `isHexadecimal`
 # accepts every ASCII letter and `parseInt` then reads the longest hex
