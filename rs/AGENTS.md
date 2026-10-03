@@ -125,6 +125,29 @@ two ports, handed `r.prev.node` by reference, take milliseconds
   containers are recorded and written in ONE walk when the header ends,
   when an action fails (so a diagnostic is raised over the same tree as
   before), or before anything else reads or writes the tree (`settle`).
+- **A table's history is a trie, not a path lookup.** A header may define
+  an existing table only when a header's prefix created it and no header
+  has defined it yet (`[a.b]` then `[a]`; `[a]` twice, `a.b = 1` then `[a]`
+  and `a = {}` then `[a]` are `toml_key_conflict`). The other two ports
+  keep those tables in a set of nodes; a node here is a path, and a path
+  copied or serialised per segment would make a header quadratic again.
+  So the cursor also carries a number: its node in a trie over the tree's
+  paths, flat in one map in the context's `u` bag (`toml_implicit`), whose
+  entry for a child is keyed by the parent's number and the segment and
+  holds the child's number and the implicit flag. One hash lookup per
+  segment, whatever the depth. A table body and an inline table are cells
+  of their own, and their paths number from the same root node, so a
+  body's own `a` shares its trie node with the document's `a`. Only a
+  cursor on the document's own cell may change a mark: `@toml-bo` records
+  that cell (`toml_root`), and a dotted key that walks through a table
+  clears the table's mark only there. A clear without that check refuses
+  valid TOML: `[a.b]`, then `[c]` with `a.x = 1` and `a.y = 2`, then `[a]`,
+  because the second dotted key clears the document's mark on `a`;
+  `key_conflicts_are_diagnosed` holds that document legal, and fails when
+  the check is taken out. Marks are kept by path, so a table the merge of
+  a body replaced kept the old table's mark; the merge only adds keys now,
+  because `body_conflict` in `refs.rs` refuses a key at the top of a body
+  that the table already holds.
 
 The document is the same, table for table and key for key, because each
 table is created in the same container, under the same key, in the same
@@ -304,36 +327,35 @@ delete the local comparator in all three halves together.
 
 ## The open divergence is an ENGINE repair, not a grammar one
 
-Three rows of `../test/divergent.tsv` carry the `rust` column away from
-the other two ports, and nothing in this crate can close them.
+One row of `../test/divergent.tsv` carries the `rust` column away from
+the other two ports, and nothing in this crate can close it.
 
 When an alternate needs two tokens and the SECOND one is the lexer's bad
-token, TypeScript and Go raise that token's own diagnosis and this port
-answers `unexpected` at the first token:
+token, the Rust engine once built its "no alternate matched" error from
+the first lookahead token alone (`deferred_error_code(t0)` in
+`tabnas/parser` `rs/src/parser.rs`), so a bad token at any slot past the
+first lost its code, and this port answered `unexpected` at the first
+token where TypeScript and Go raised the token's own diagnosis.
+tabnas/parser#274 repaired that in the engine: it now keeps the bad token
+it met while scanning the slots and raises its code, as the canonical
+does (`ts/src/rules.ts`, the deferred bad-token throw). The string
+matcher was never the cause: instrumented, it cuts exactly the same
+tokens in all three ports, including the second `#ST` the remaining row
+re-lexes out of the leftover apostrophes.
+
+What remains is one position:
 
 | input | ts, go | rust |
 |---|---|---|
-| `["abc` | `unterminated_string@1:2` | `unexpected@1:1` |
-| `["tbl<newline>"]` | `unprintable@1:2` | `unexpected@1:1` |
-| `a = '''x''''''''''''''` | `unterminated_string@1:18` | `unexpected@1:22` |
+| `a = '''x''''''''''''''` | `unterminated_string@1:18` | `unterminated_string@1:22` |
 
-The string matcher is not the cause: instrumented, it cuts exactly the
-same tokens in all three ports, including the second `#ST` the third row
-re-lexes out of the leftover apostrophes. The engine is. In
-`tabnas/parser` `rs/src/parser.rs`, `slot_matches` rejects `TIN_BD` at
-every position and records nothing, and the "no alternate matched" error
-is then built from `context.t.first()` through `deferred_error_code`, so
-a bad token at any slot past the first loses its code. The canonical
-engine keeps the bad token it met while scanning the slots and throws its
-`why` once every alternate has declined (`ts/src/rules.ts`, the deferred
-bad-token throw), which is why Go, reading the same lookahead, agrees
-with TypeScript.
-
-The repair belongs in the engine: remember the first `TIN_BD` token seen
-while matching alternates, and raise its code and position instead of
-`unexpected` on the first token when no alternate matches. Six documents
-of the BurntSushi corpus are in this class; all six are rejected either
-way, so the `rust` row of `../test/conformance.tsv` is unaffected and the
+`["abc` and `["tbl<newline>"]`, which once answered `unexpected@1:1`
+here, now answer the canonical `unterminated_string@1:2` and
+`unprintable@1:2`, and their rows are gone. The repair for the position,
+if one is wanted, is the engine's as well: this plugin sees the token
+after the engine has chosen what to report. Six documents of the
+BurntSushi corpus were in this class; all six are rejected either way,
+so the `rust` row of `../test/conformance.tsv` is unaffected and the
 register is the only thing holding the difference.
 
 ## The conformance suite never skips

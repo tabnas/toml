@@ -54,34 +54,33 @@ input	ts	go	rust	why
 ["😀" 1]	ERROR:unexpected@1:6	ERROR:unexpected@1:5	ERROR:unexpected@1:5	astral column unit — permanent
 ["ab😀cd" 1]	ERROR:unexpected@1:10	ERROR:unexpected@1:9	ERROR:unexpected@1:9	astral column unit — permanent
 #
-# --- A bad token reached in LOOKAHEAD: the code the reader is given ------
+# --- A bad token reached in LOOKAHEAD: the position the reader is given ---
 # When an alternate needs two tokens and the SECOND one is the lexer's bad
-# token, TypeScript and Go raise that token's own diagnosis
-# (unterminated_string, unprintable), and Rust answers `unexpected` at the
-# first token instead. The Rust engine builds the "no alternate matched"
-# error from the first lookahead token alone
-# (tabnas/parser rs/src/parser.rs, `deferred_error_code(t0)`), so a bad
-# token in any later slot loses its code; the canonical engine remembers it
-# and throws it once every alternate has declined
-# (tabnas/parser ts/src/rules.ts, the deferred bad-token throw).
+# token, the Rust engine once built the "no alternate matched" error from
+# the first lookahead token alone (`deferred_error_code(t0)` in
+# tabnas/parser rs/src/parser.rs), so a bad token in a later slot lost its
+# code: TypeScript's and Go's `unterminated_string` or `unprintable` was
+# `unexpected` at the first token in Rust. tabnas/parser#274 repaired that
+# in the engine, which now raises the bad token with its own code, as the
+# canonical does (tabnas/parser ts/src/rules.ts, the deferred bad-token
+# throw). The two rows that pinned the CODE, `["abc` and `["tbl\n"]`, are
+# closed and gone: all three ports answer the canonical code at 1:2.
 #
-# Both other ports agree on the code AND the position, so these rows pin
-# both. The repair is an ENGINE repair in tabnas/parser's Rust port, not a
-# grammar one: this plugin sees the token after the engine has chosen what
-# to report. Six documents of the BurntSushi corpus land here, which is why
-# the `rust` row of ../test/conformance.tsv still reproduces the `ts` counts:
-# all six are rejected by every port, and only the code differs.
+# What remains is one POSITION. A run of apostrophes long enough that the
+# leftovers of one string re-lex into another, whose failure only the
+# lookahead sees: TypeScript and Go name 1:18, Rust 1:22, with the same
+# code. Both other ports agree on the code AND the position, so the row
+# pins both. The repair, if one is wanted, is an ENGINE repair in
+# tabnas/parser's Rust port, not a grammar one: this plugin sees the token
+# after the engine has chosen what to report. The six documents of the
+# BurntSushi corpus that landed in this group are rejected by every port,
+# so the `rust` row of ../test/conformance.tsv reproduces the `ts` counts
+# throughout.
 #
-# The first row is a quoted table-header key that never closes, the second a
-# raw newline inside one, and the third a value context: a run of
-# apostrophes long enough that the leftovers of one string re-lex into
-# another, whose failure only the lookahead sees.
-#
-# MEASURED 2026-09-22 in all three ports, against the sibling checkouts and
-# again against the published Go modules, which agree.
-["abc	ERROR:unterminated_string@1:2	ERROR:unterminated_string@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
-["tbl\n"]	ERROR:unprintable@1:2	ERROR:unprintable@1:2	ERROR:unexpected@1:1	bad token in lookahead: engine repair in tabnas/parser rs
-a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unexpected@1:22	bad token in lookahead: engine repair in tabnas/parser rs
+# MEASURED 2026-10-03 in all three ports against the sibling checkouts
+# (tabnas/parser main e0a5e3f, which carries #274); first measured
+# 2026-09-22, when the three rows differed in code.
+a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:18	ERROR:unterminated_string@1:22	bad token in lookahead, the position alone: engine repair in tabnas/parser rs
 #
 # --- A string escape where the three ports are not unanimous -------------
 # `\u12g4` is a lax hexadecimal scan. The canonical `isHexadecimal`
@@ -105,19 +104,3 @@ a = '''x''''''''''''''	ERROR:unterminated_string@1:18	ERROR:unterminated_string@
 #
 # MEASURED 2026-09-22 in all three ports.
 a = "\\u12g4"	{"a":"\u0012"}	ERROR:invalid_unicode@1:5	{"a":"\u0012"}	lax hexadecimal scan: Go is right, TS and Rust move
-#
-# --- The POSITION of a key conflict --------------------------------------
-# All three ports refuse a redefined key with toml_key_conflict (the shared
-# rows are spec/key-conflict.tsv), and only where they point differs. Go and
-# Rust point at the key being redefined, `a` in `[a]` on line 2. TypeScript
-# answers 1:1: the plugin raises on `ctx.t0`, and its engine has moved the
-# matched tokens into the rewind history and emptied the slot by the time an
-# alternate's action runs (tabnas/parser ts/src/rules.ts, the consumed-token
-# shift before `alt.a`), so the error is built from the NOTOKEN sentinel.
-# TYPESCRIPT IS THE REPAIR TARGET: the two ports that name the line the
-# reader has to look at are right, and the repair is in ts/src/toml.ts
-# (raise on the matched key token, `r.o0`) or in the engine. Not a code
-# divergence, so no spec row is affected.
-#
-# MEASURED 2026-10-02 in all three ports.
-a = 1\n[a]\nb = 2	ERROR:toml_key_conflict@1:1	ERROR:toml_key_conflict@2:2	ERROR:toml_key_conflict@2:2	position of a key conflict: TS reports 1:1, TS moves

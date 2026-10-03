@@ -44,6 +44,9 @@ func makeRefs() map[jsonic.FuncRef]any {
 			r.Node = r.Parent.Node
 		}),
 
+		// Merge the body into the table. Every key of the body was checked
+		// against the table when the body defined it (bodyTable), so this
+		// only ever adds keys and never replaces one.
 		"@table-bc": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
 			if r.U["top_dive"] != nil {
 				return
@@ -85,7 +88,27 @@ func makeRefs() map[jsonic.FuncRef]any {
 				return
 			}
 			if node, ok := asMap(r.Node); ok {
+				redefines(node, key, r.O0)
 				node.Set(key, r.Child.Node)
+			}
+		}),
+
+		// Before the base grammar's own before-close action writes the
+		// pair: a key already in the table is a conflict, not a merge,
+		// whether the body has it or the table did before the body began.
+		"@pair-bc/prepend": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+			if _, ok := r.U["pair"]; !ok {
+				return
+			}
+			key, ok := r.U["key"].(string)
+			if !ok {
+				return
+			}
+			if node, ok := asMap(r.Node); ok {
+				redefines(node, key, r.O0)
+			}
+			if table := bodyTable(r); table != nil {
+				redefines(table, key, r.O0)
 			}
 		}),
 
@@ -204,14 +227,21 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// A dotted key inside a table body or an inline table:
 		// `a.b = 1` descends through `a`, so an existing table or array
 		// passes and a value under that name is a conflict, exactly as
-		// `[a.b]` would find it.
+		// `[a.b]` would find it. A table it creates or walks through is
+		// one a dotted key defined, which no later header may define
+		// again. At the top of a table body, the key may not be one the
+		// table already holds: `[a.b.c]` `z = 9` then `[a]` `b.c.t = 1`
+		// would replace `b` at the merge, losing `z`.
 		"@dive-key-dot": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
 			key := tokenString(r.O0)
 			parent, ok := asMap(r.Parent.Node)
 			if !ok {
 				return
 			}
-			r.Node = tableAt(parent, key, ctx, DESCEND)
+			if table := bodyTable(r); table != nil {
+				redefines(table, key, r.O0)
+			}
+			r.Node = tableAt(parent, key, ctx, DIVE)
 		}),
 
 		// --- Conditions ---
@@ -272,34 +302,64 @@ func tokenString(t *jsonic.Token) string {
 	return ""
 }
 
-// Whether an existing array of tables is a legitimate thing to land on.
+// What a segment asks of the table under its key.
 //
 // A header like `[fruit.variety]` walks THROUGH `fruit` and DEFINES
-// `variety`, and the two positions have opposite rules. Descending through
-// an array of tables is how `[[x]]` followed by `[x.y]` works, and four
-// valid corpus documents rely on it. Landing on one as the thing being
-// defined is `[x]` trying to redefine `[[x]]`: invalid TOML.
+// `variety`, and a dotted key like `fruit.variety = 1` walks through
+// `fruit` as well. The three positions have different rules. Descending
+// through an array of tables is how `[[x]]` followed by `[x.y]` works, and
+// four valid corpus documents rely on it; landing on one as the thing being
+// defined is `[x]` trying to redefine `[[x]]`: invalid TOML. A table a
+// header walks through and finds missing is created implicitly, and TOML
+// lets one later header define it (`[a.b]` then `[a]`); a table a header
+// has DEFINED, a dotted key has created or walked through, or an inline
+// table has made may not be defined by a header again (`[a]` twice,
+// `a.b = 1` then `[a]`, `a = {}` then `[a]`).
 //
-// The grammar already separates the two: `#DOT`-terminated segments are
-// intermediate, `#CS`-terminated ones are final.
+// The grammar already separates the positions: `#DOT`-terminated segments
+// of a header are intermediate, `#CS`-terminated ones are final, and a
+// dotted key's segments are the `dive` rule's.
+type reach int
+
 const (
-	DESCEND = true
-	DEFINE  = false
+	DESCEND reach = iota // a header's leading segment
+	DEFINE               // a header's last segment
+	DIVE                 // a dotted key's leading segment
 )
+
+// implicitTables is the set of tables a header's prefix created and no
+// header has yet defined: the only existing tables a header may define.
+// Kept per parse, in the context's bag for plugin state, so that a table's
+// history never leaves a mark on the value a reader gets back.
+func implicitTables(ctx *jsonic.Context) map[*jsonic.OrderedMap]bool {
+	if set, ok := ctx.U["toml_implicit"].(map[*jsonic.OrderedMap]bool); ok {
+		return set
+	}
+	set := map[*jsonic.OrderedMap]bool{}
+	ctx.U["toml_implicit"] = set
+	return set
+}
 
 // keyConflict is the DIAGNOSED refusal to redefine a key, raised as the
 // canonical port raises it: a `toml_key_conflict` error at the current
-// token. The engine passes a panicked *TabnasError through with its code
-// intact (tabnas/parser go/parser.go, startParse), rebuilt through its
-// normal funnel so the error carries the source excerpt, the rule stack
-// and the hint registered in registerErrorMessages. Anything else that
-// panics inside an action still becomes `internal`, so this is the one
-// shape a grammar action may raise.
+// token, which in the alternate action of a header's segment or a dotted
+// key's segment is that segment's own key, the token the canonical port
+// raises on (`r.o0`). The engine passes a panicked *TabnasError through
+// with its code intact (tabnas/parser go/parser.go, startParse), rebuilt
+// through its normal funnel so the error carries the source excerpt, the
+// rule stack and the hint registered in registerErrorMessages. Anything
+// else that panics inside an action still becomes `internal`, so this is
+// the one shape a grammar action may raise.
+func keyConflict(ctx *jsonic.Context, key, why string) {
+	keyConflictAt(ctx.T0, key, why)
+}
+
+// keyConflictAt is keyConflict at a token of the caller's choosing: the
+// key's own token, for a refusal raised once the key's value is in hand.
 //
 // Detail is rendered here rather than left to the template, because the
 // funnel re-renders the template without this action's details.
-func keyConflict(ctx *jsonic.Context, key, why string) {
-	tkn := ctx.T0
+func keyConflictAt(tkn *jsonic.Token, key, why string) {
 	if tkn == nil {
 		tkn = jsonic.NoToken
 	}
@@ -329,8 +389,20 @@ func valueAt(container *jsonic.OrderedMap, key string) any {
 	return existing
 }
 
+// redefines refuses a key about to be given a value it already has:
+// `a = 1` then `a = 2`, `a.b = 1` then `a.b = 2`, `{b = 1, b = 2}`. TOML
+// allows a key one value, and the base grammar's duplicate-key rule (last
+// wins, tables merged) is not it. Raised on the key's own token, which is
+// where the reader looks.
+func redefines(container *jsonic.OrderedMap, key string, at *jsonic.Token) {
+	if existing := valueAt(container, key); existing != nil {
+		keyConflictAt(at, key, describe(existing))
+	}
+}
+
 // tableAt is the table under key in container, or a DIAGNOSED refusal to
-// descend into something that is not one.
+// descend into something that is not one, or to define a table a second
+// time.
 //
 // TOML forbids redefining a key, so `a = {b = 1, b.c = 2}` and `a = 1`
 // followed by `[a.b]` are invalid documents. This port used to walk into
@@ -339,18 +411,24 @@ func valueAt(container *jsonic.OrderedMap, key string) any {
 // error as a conformant rejection, and this is where the Go row of
 // test/conformance.tsv catches up with the TypeScript one.
 //
-// An existing array passes when descending (`[[x]]` then `[x.y]`) and
-// conflicts when defining (`[[x]]` then `[x]`); an existing table passes
-// either way; anything else is a value, and a value is not a table.
-func tableAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context, descend bool) any {
+// An existing array passes when walked through (`[[x]]` then `[x.y]`) and
+// conflicts when defined (`[[x]]` then `[x]`); an existing table passes when
+// walked through, and a header may DEFINE it only if a header's prefix made
+// it and no header has defined it yet: `[a]` after `[a.b]` is that one case,
+// and `[a]` after `[a]`, after `a.b = 1` or after `a = {}` is a key defined
+// twice; anything else is a value, and a value is not a table.
+func tableAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context, how reach) any {
 	existing := valueAt(container, key)
 	if existing == nil {
 		m := newMap()
 		container.Set(key, m)
+		if how == DESCEND {
+			implicitTables(ctx)[m] = true
+		}
 		return m
 	}
 	if arr, ok := existing.([]any); ok {
-		if descend {
+		if how != DEFINE {
 			return arr
 		}
 		// `[[fruit.variety]]` then `[fruit.variety]`. Both ports used to
@@ -361,10 +439,56 @@ func tableAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context, desc
 		keyConflict(ctx, key, "it is already an array of tables")
 	}
 	if m, ok := asMap(existing); ok {
-		return m
+		// A dotted key that walks through a table defines it, as it
+		// defines every table it creates, so the table leaves the implicit
+		// set and no header defines it afterwards. No document reaches this
+		// today: a dotted key walks the map its own table body or inline
+		// table is parsed into, which holds no header's tables, and the
+		// body checks against its table (bodyTable) refuse `[x.a.b]`, `[x]`
+		// with `a.c = 1`, then `[x.a]` at `a.c`. It keeps this rule true
+		// without leaning on that.
+		if how == DIVE {
+			delete(implicitTables(ctx), m)
+		}
+		if how != DEFINE {
+			return m
+		}
+		if set := implicitTables(ctx); set[m] {
+			delete(set, m)
+			return m
+		}
+		keyConflict(ctx, key, "it is already defined")
 	}
 	keyConflict(ctx, key, describe(existing))
 	return nil
+}
+
+// bodyTable is the table a table body is merged into, when r writes the
+// TOP level of that body: a pair in the body's map, or the first segment of
+// a dotted key there; nil anywhere else. A table's body is parsed into a
+// map of its own and merged into the table when the body ends (@table-bc),
+// so a key the table already holds from an earlier header is not in the
+// map the body's own checks read: `[a.b]` `c = 1` then `[a]` `b = 2`
+// replaced `b`, losing `c`, and `[[a.b]]` then `[a]` `b.y = 2` replaced the
+// array. Nothing writes to the table while its body is parsed, so checking
+// a key against it where the key's token is in hand is checking it at the
+// merge, and the refusal points at the key, as every pair conflict does. A
+// pair or a dotted key in an inline table has no such table: its map is
+// the value itself.
+func bodyTable(r *jsonic.Rule) *jsonic.OrderedMap {
+	m := r.Parent
+	if m != nil && m != jsonic.NoRule && m.Name == "pair" {
+		m = m.Parent
+	}
+	if m == nil || m == jsonic.NoRule || m.Name != "map" {
+		return nil
+	}
+	t := m.Parent
+	if t == nil || t == jsonic.NoRule || t.Name != "table" {
+		return nil
+	}
+	table, _ := asMap(t.Node)
+	return table
 }
 
 // arrayAt is the array of tables under key in container, or a DIAGNOSED
