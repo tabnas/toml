@@ -99,13 +99,14 @@ key token) or in the engine, and the row goes when it lands.
 
 The last two rows are the **depth guard**, and they are permanent like the
 astral rows: the Rust port refuses a document nested past 127 levels with
-the engine's `cancel`, through a parse guard of its own that counts a
-dotted key's and a header's tables as well as jsonic's containers
-(tabnas/toml#78), where TypeScript and Go parse it. The `ts` and `go`
-cells hold the 128-level value, which is why those two rows are long. The
-exact boundaries are pinned in `rs/tests/toml_test.rs`; the rows are the
-shared record that the other two ports do not refuse them. Do not delete
-them on a sweep.
+the engine's `cancel`, through a parse guard of its own that counts every
+container the value sits in -- the inline tables and arrays jsonic's guard
+counted, and the tables a dotted key or a header nests through, which it
+never saw (tabnas/toml#78) -- where TypeScript and Go parse it. The `ts`
+and `go` cells hold the 128-level value, which is why those two rows are
+long. The exact boundaries are pinned in `rs/tests/toml_test.rs`; the rows
+are the shared record that the other two ports do not refuse them. Do not
+delete them on a sweep.
 
 One difference that belongs in the register cannot be written into it. A
 lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds

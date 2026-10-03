@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use tabnas::{ActionError, Context, Rule, Tabnas, Value};
+use tabnas::{ActionError, Context, Rule, RuleSnapshot, Tabnas, Value};
 
 use crate::node::{
     merge_into, new_map, path_of, set_path, snapshot_path, write_at, Cell, Cursor, Path, DEFINE,
@@ -53,13 +53,14 @@ fn table_array(rule: &Rule) -> bool {
     0 < rule.n.get("table_array").copied().unwrap_or(0)
 }
 
-/// Whether this dive continues the dotted key the dive before it began:
-/// it was reached by `r: dive` from a segment ending in a dot. A dive
-/// pushed by a pair or a map begins a key, and so does one reached through
-/// the close loop from a dive that ENDED a key (`dive_end`), which takes
-/// the next dotted key without returning to the pair.
-fn continues_key(rule: &Rule) -> bool {
-    rule.prev_rule.as_ref().is_some_and(|previous| {
+/// Whether a dive that replaced `previous` continues the dotted key that
+/// rule began: it was reached by `r: dive` from a segment ending in a dot.
+/// A dive pushed by a pair or a map begins a key, and so does one reached
+/// through the close loop from a dive that ENDED a key (`dive_end`), which
+/// takes the next dotted key without returning to the pair. The depth
+/// guard asks the same question of a dive that has not run `@dive-bo` yet.
+pub(crate) fn continues_key(previous: Option<&Rc<RuleSnapshot>>) -> bool {
+    previous.is_some_and(|previous| {
         "dive" == previous.name.as_ref() && !truthy(previous.u.get("dive_end"))
     })
 }
@@ -166,7 +167,7 @@ fn register_state_actions(parser: &mut Tabnas) {
     // begins the next key from the parent's table again, as the
     // canonical `@dive-key-dot` reads `r.prev.node` or `r.parent.node`.
     parser.state_action_ref("@dive-bo", |rule, _context| {
-        let path = if continues_key(rule) {
+        let path = if continues_key(rule.prev_rule.as_ref()) {
             prev_path(rule)
         } else {
             parent_path(rule)

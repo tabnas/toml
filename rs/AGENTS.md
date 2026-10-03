@@ -9,7 +9,7 @@ only covers what is specific to this crate.
 
 | Path | |
 |---|---|
-| `src/lib.rs` | the embedded grammar, the document adjustments, the depth guard (`DEPTH_LIMIT`, `DEPTH_GUARD`), `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION`, and the translation parts `manifest_text` and `render_text`, `include_str!` of the copies in `translate/` |
+| `src/lib.rs` | the embedded grammar, the document adjustments, the depth guard (`DEPTH_LIMIT`, `DEPTH_GUARD`) and the unit tests of its kept count, `toml`, `plugin`, `make`, `make_with`, `parse`, `VERSION`, and the translation parts `manifest_text` and `render_text`, `include_str!` of the copies in `translate/` |
 | `src/refs.rs` | every `@`-named reference the grammar uses: state actions, alternate actions, conditions, conditional `p:`/`r:` targets |
 | `src/node.rs` | table nodes as PATHS (see below), the cursor that keeps a dotted header and a dotted key linear, and the key-conflict diagnosis |
 | `src/strmatcher.rs` | TOML's basic, literal and multi-line strings |
@@ -181,38 +181,79 @@ walk the loop and the nested inline tables in every runtime.
 
 `toml()` installs a parse guard under the name `depth`, the name jsonic
 installs its own under, so this one replaces it, as YAML's does. jsonic's
-counts its `map` and `list` rules, which is every inline table and array,
-but a header and a dotted key nest through `table` and `dive`, which it
-never saw, so a key of 10,000 segments parsed. `DEPTH_LIMIT` levels parse
-and the next one is refused with the engine's `cancel`, as every grammar
-in the fleet refuses depth in Rust (aless reads that `cancel` as
-`too_deep`, and the transducer as `INPUT_INVALID` naming the grammar's
-guard). TypeScript and Go have no limit, and the two rows of
+counts its `map` and `list` rules, which is every inline table, every array
+and every table's body, but a header and a dotted key nest through `table`
+and `dive`, which it never saw, so a key of 10,000 segments parsed.
+`DEPTH_LIMIT` levels parse and the next one is refused with the engine's
+`cancel`, as every grammar in the fleet refuses depth in Rust (aless reads
+that `cancel` as `too_deep`, and the transducer as `INPUT_INVALID` naming
+the grammar's guard). TypeScript and Go have no limit, and the two rows of
 `../test/divergent.tsv` record it as permanent.
 
-`depth` (in `lib.rs`) counts, at every step, the containers open on the
-rule stack and in the current rule, plus the tables of the nearest header,
-plus the tables the current dotted key has descended through (`dive_key`,
-which every rule under a dive inherits, an inline table's keys included).
-A header's tables are read two ways, and the reason is the one `@dive-bo`
-exists for: a `table` rule on the stack has its body open and its path, in
-`u`, is exact (arrays of tables included); a `table` rule that is the
-current rule is still reading its header, one segment per replacement, and
-a replacement inherits counters but not `u`, so its path says nothing yet
-and the `table_dive` counter, plus one for the segment being read, says
-how deep the header has got. That is what refuses a header AT the segment
-past the limit, before any value past it is built; read the path there and
-a 10,000-segment header is parsed to its end, written into the tree 10,000
+`depth` (in `lib.rs`) counts the root table and what each rule adds: every
+rule on the stack (`frame_levels`), and the rule the loop is working on
+(`current_levels`), which the engine hands over apart from the stack. A
+`map` or a `list` adds one, except a `map` directly above a `table`, which
+is that table's body and sits INSIDE the table at the end of its path. A
+`table` or a `dive` adds the length of its path, kept in `u`.
+
+**A dive is counted by its path, never by a counter.** A dive's path
+counts the tables its key has descended through from the table the key is
+in, so every dotted key still open counts, each from where the one outside
+it left off. The first cut of this guard read a `dive_key` counter off the
+current rule instead, which every rule under a dive inherited, and the
+dive's close loop, which takes the next dotted key in the same frame and
+has to begin it from the table it is in, reset that counter to zero. Inside
+an inline table that is the value of another key, the reset dropped the
+OUTER key's tables too: `k0.….k99 = {p.q = 1`, a newline and
+`b0.….b99 = 1}`, which this grammar accepts, parsed at 200 levels, and 26
+levels of 99-segment keys built a value 2,576 deep whose display ended the
+process with a stack overflow. A key after a comma begins with a new
+`pair`, which inherited the count, so only the newline and space forms got
+through. The counter is gone from the grammar, since nothing reads it, and
+`a_key_the_close_loop_takes_counts_from_the_keys_outside` in
+`tests/toml_test.rs` pins those shapes.
+
+The current rule is the one place a path says nothing yet: the engine runs
+the guard before any of the step's actions, and a replacement inherits
+counters but not `u`. A `table` that is the current rule is still reading
+its header, one segment per replacement, so the `table_dive` counter, plus
+one for the segment being read, says how deep the header has got. A `dive`
+that is the current rule and still open has not run `@dive-bo`: it stands
+where the segment it replaced left off when it continues a key
+(`continues_key`, the question `@dive-bo` asks), and at nothing when it
+begins one. That is what refuses a header or a key AT the segment past the
+limit, before any value past it is built; read the paths there and a
+10,000-segment header is parsed to its end, written into the tree 10,000
 deep, and only then refused, with the deep value left to drop.
+
+The count over the stack is KEPT from one step to the next
+(`levels_on_stack`), as jsonic keeps its own (tabnas/jsonic#91): a frame's
+levels depend on it and the frame below it alone, the engine changes the
+stack only at the top, and a step recounts from the first position whose
+rule id changed. Recounting the whole stack at every step, as the first cut
+did, made 2,000 lines of arrays or inline tables nested 120 deep take 20
+to 28 percent longer than under jsonic's guard in a release build; kept,
+they take what they took there. Two unit tests in `lib.rs` hold it:
+`the_kept_count_is_the_walked_count_at_every_step` compares it with a walk
+at every step, and `a_step_counts_what_changed_not_the_whole_stack` counts
+the frames a step looks at.
 
 The boundaries, in container terms: a dotted key of 127 segments parses
 and 128 is refused (the root table is a level, so n segments nest n
 levels); a header of 126 parses and 127 is refused (its tables sit in the
-root); an array of tables is one level more. `nesting_is_bounded_by_the_depth_guard`
-in `tests/toml_test.rs` pins them, with the inline-table and mixed cases,
-width against depth, and the shared default parser. A caller that wants
-the depth lifts the guard with `remove_parse_guard(DEPTH_GUARD)` and drops
-the value on a stack that can take it, which is what the perf tests do.
+root); an array of tables is one level more; an inline table or an array
+in the root table stops at 126, where jsonic's guard stopped it.
+`nesting_is_bounded_by_the_depth_guard` in `tests/toml_test.rs` pins them,
+with the mixed cases, width against depth, and the shared default parser.
+
+**Lifting the guard lifts every bound.** A caller that wants the depth
+calls `remove_parse_guard(DEPTH_GUARD)`, and because this guard replaced
+jsonic's under the same name, nothing is left: not the bound on headers
+and dotted keys this guard adds, and not the one jsonic's guard kept on
+inline tables and arrays either. 127 nested arrays, which jsonic's guard
+refused, parse, and so do 10,000. The caller drops the value on a stack
+that can take it, which is what the perf tests do.
 
 ## Two lifecycle actions that are not where the canonical ones are
 

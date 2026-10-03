@@ -34,10 +34,15 @@
 //! into every runtime. The shared fixtures in `test/spec/*.tsv` are the
 //! parity contract across TypeScript, Go and Rust.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use serde_json::{json, Map, Value as Json};
-use tabnas::{Context, GrammarError, GrammarSpec, Plugin, PluginError, Tabnas, Value, ValueDef};
+use tabnas::{
+    Context, GrammarError, GrammarSpec, Plugin, PluginError, RuleSnapshot, RuleState, Tabnas,
+    Value, ValueDef,
+};
 
 mod datematcher;
 mod daterange;
@@ -206,15 +211,13 @@ pub(crate) const GRAMMAR_TEXT: &str = r#"
   # A dotted key is a replace loop, as a dotted header is: each segment
   # ending in a dot re-enters dive in the same frame (r), so rule depth
   # stays what one segment needs however long the key, and only the value
-  # nests. dive_key counts the tables a key has descended through from the
-  # table it is in; the loop at the close, which takes the next dotted key
-  # without returning to the pair, resets it.
+  # nests. The loop at the close takes the next dotted key without
+  # returning to the pair, and begins it from the table that holds both.
   rule: dive: {
     open: [
       {
         s: ['#ST #NR #ID' '#DOT']
         r: dive
-        n: { dive_key: 1 }
         a: '@dive-key-dot'
       }
       {
@@ -228,7 +231,6 @@ pub(crate) const GRAMMAR_TEXT: &str = r#"
         s: ['#ST #NR #ID' '#DOT']
         b: 2
         r: dive
-        n: { dive_key: 0 }
       }
       {}
     ]
@@ -435,20 +437,29 @@ fn adjust_messages(options: &mut Map<String, Json>) {
 ///
 /// A level is a container the value being built sits in: the document's
 /// root table, a table or an array of tables along a header's or a dotted
-/// key's path, an inline table, an array. The number is jsonic's, which
-/// `tabnas-json` and `serde_json` use too, so an inline table, which is
-/// jsonic's, is bounded where it always was, and a dotted key and a
-/// header, which nest through this grammar's own rules and went unbounded
-/// under jsonic's check, are bounded with it (tabnas/toml#78): a key of
-/// 10,000 segments used to parse, building a value 10,000 deep.
+/// key's path, an inline table, an array. Every one counts, however the
+/// parse reaches it, and a key inside an inline table counts on from the
+/// keys outside it. The number is jsonic's, which `tabnas-json` and
+/// `serde_json` use too. jsonic's own check counts its `map` and `list`
+/// rules, which here are every inline table, every array and the body of
+/// every table, and never the tables a header or a dotted key nests
+/// through: under it a key of 10,000 segments parsed, building a value
+/// 10,000 deep (tabnas/toml#78). So an inline table or an array in the
+/// root table is bounded where jsonic's check bounded it, and one under a
+/// header or a dotted key now has that header's or key's tables counted
+/// above it.
 ///
 /// The engine parses iteratively, but displaying, converting or dropping a
 /// `Value` walks the tree with the call stack, so an unbounded document
 /// ends the caller's process rather than returning an error. TypeScript
-/// and Go have no limit, which `../test/divergent.tsv` records. A caller
-/// that wants the depth anyway lifts the guard with
-/// `parser.remove_parse_guard(DEPTH_GUARD)`, and drops the value on a
-/// stack that can take it.
+/// and Go have no limit, which `../test/divergent.tsv` records.
+///
+/// A caller that wants the depth anyway lifts the guard with
+/// `parser.remove_parse_guard(DEPTH_GUARD)`. That lifts every bound, and
+/// not only the one this guard adds: the guard replaced jsonic's check
+/// under the same name, so nothing is left to stop an inline table or an
+/// array either, and a document of any depth parses. The caller then
+/// displays and drops the value on a stack that can take it.
 pub const DEPTH_LIMIT: usize = 127;
 
 /// The name the depth check is installed under, as a parse guard, and the
@@ -457,74 +468,169 @@ pub const DEPTH_LIMIT: usize = 127;
 /// It is the name jsonic installs its own check under, so this one
 /// replaces it, as YAML's does: jsonic's counts its `map` and `list`
 /// rules, which is every inline table and array, but a header and a
-/// dotted key nest through `table` and `dive`, which it does not see. A
-/// guard rather than the parse budget, because the budget is one slot a
-/// caller's `parse_budget` replaces, and a guard holds whatever budget the
-/// caller sets. A parse a grammar's guard cancels is reported by the
-/// fleet's tools as the input's fault, naming the guard.
+/// dotted key nest through `table` and `dive`, which it does not see. So
+/// removing this guard removes jsonic's bound with it, and leaves none
+/// (see [`DEPTH_LIMIT`]). A guard rather than the parse budget, because
+/// the budget is one slot a caller's `parse_budget` replaces, and a guard
+/// holds whatever budget the caller sets. A parse a grammar's guard
+/// cancels is reported by the fleet's tools as the input's fault, naming
+/// the guard.
 pub const DEPTH_GUARD: &str = "depth";
 
-/// Whether a rule of this name holds a container: jsonic's `map` and
-/// `list`, which here are a table's body, an inline table and an array.
-fn is_container(name: &str) -> bool {
-    "map" == name || "list" == name
-}
-
 /// How deep the value being built is nested at this point of the parse:
-/// the root table; the containers open on the rule stack and in the rule
-/// the loop is working on, which the engine hands over apart from the
-/// stack; the tables the nearest header reached; and the tables the
-/// current dotted key has descended through, the `dive_key` counter the
-/// grammar keeps on the dive and every rule under it inherits, an inline
-/// table's keys included.
+/// the root table, what the rules on the rule stack add to it
+/// ([`levels_on_stack`]), and what the rule the loop is working on adds
+/// ([`current_levels`]).
 ///
 /// The root table is counted first, because no rule stands for it on its
 /// own: a document's keys live in a `map` rule the root `table` pushes, or
-/// in a `dive` it pushes straight away when the first key is dotted. A
-/// header's tables are read two ways. A `table` rule on the stack has its
-/// body open, and its path, kept in its `u` bag, is exact, arrays of
-/// tables included; the body itself is a `map` rule INSIDE the table at
-/// the end of that path, not a level of its own, so the `map` directly
-/// above such a table is taken off again (and the root's body with it,
-/// at path length zero). A `table` rule that is the current rule is still
-/// reading its header, one segment per replacement, and a replacement
-/// inherits counters but not `u`, so its path says nothing yet: there the
-/// `table_dive` counter, the segments entered so far, plus the one being
-/// read, say how deep the header has got, so a header is refused at the
-/// segment that passes the limit and never builds a value past it.
-///
-/// Counted afresh at each step. Every level holds a container and a few
-/// other rules, and a repetition re-enters its rule in one frame, so what
-/// a step walks is bounded by the limit itself.
+/// in a `dive` it pushes straight away when the first key is dotted.
 fn depth(context: &Context) -> usize {
-    let counter = |rule: &tabnas::RuleSnapshot, name: &str| {
-        rule.n
-            .get(name)
-            .map_or(0, |count| usize::try_from(*count).unwrap_or(0))
+    let below = context.rule_stack.last();
+    let current = context
+        .rule
+        .as_ref()
+        .map_or(0, |rule| current_levels(rule, below));
+    1 + levels_on_stack(context) + current
+}
+
+/// The levels the rules on the rule stack add, carried from one step to
+/// the next.
+///
+/// The guard runs at every step, and walking the whole stack each time
+/// cost a step as much as the stack is deep: 2,000 lines of arrays or
+/// inline tables nested 120 deep took 20 to 28 percent longer to parse
+/// than under jsonic's guard, which keeps its count this way
+/// (tabnas/jsonic#91). The engine changes the stack only at the top: a
+/// pop truncates it and a push appends the new rule's snapshot, and the
+/// rules below the top stay as they were (the engine checks this in
+/// debug builds). What a frame adds depends on it and on the frame below
+/// it alone ([`frame_levels`]), and a rule's ancestors are fixed for as
+/// long as it lives, so the levels at or below a stack position are known
+/// once the rule at that position is. The count is kept for each position
+/// with the id of the rule there, which is unique within a parse, and a
+/// step recounts only from the first position whose rule has changed,
+/// usually the top. A callback that writes into `context.rule_stack`
+/// below the top is not followed.
+fn levels_on_stack(context: &Context) -> usize {
+    let stack = &context.rule_stack;
+    STACK_COUNT.with(|count| {
+        let mut count = count.borrow_mut();
+        let here = std::ptr::from_ref(context) as usize;
+        if count.context != here || 1 == context.iteration || context.iteration < count.iteration {
+            count.context = here;
+            count.frames.clear();
+        }
+        count.iteration = context.iteration;
+        let top = count.frames.len().min(stack.len());
+        let mut kept = top;
+        while kept > 0 && count.frames[kept - 1].0 != stack[kept - 1].i {
+            kept -= 1;
+        }
+        #[cfg(test)]
+        {
+            count.examined += (top - kept) + 1 + (stack.len() - kept);
+        }
+        count.frames.truncate(kept);
+        let mut levels = count.frames.last().map_or(0, |&(_, at)| at);
+        for position in kept..stack.len() {
+            let below = position.checked_sub(1).map(|under| &stack[under]);
+            levels += frame_levels(&stack[position], below);
+            count.frames.push((stack[position].i, levels));
+        }
+        levels
+    })
+}
+
+/// The count [`levels_on_stack`] keeps from one step to the next.
+struct StackCount {
+    /// The context the count describes, by address.
+    context: usize,
+    /// The last step counted. A parse's steps go up from 1, so a first
+    /// step, or one lower than the last, is a new parse in the same place;
+    /// the same step again is the same step, asked twice.
+    iteration: usize,
+    /// For each stack position, the id of the rule there and the levels
+    /// the rules at or below it add.
+    frames: Vec<(usize, usize)>,
+    /// Frames looked at, all told: what a step costs, for the tests.
+    #[cfg(test)]
+    examined: usize,
+}
+
+thread_local! {
+    // Per thread, as a parse runs on one; a nested parse on the same
+    // thread has a context of its own and starts the count afresh.
+    static STACK_COUNT: RefCell<StackCount> = const {
+        RefCell::new(StackCount {
+            context: 0,
+            iteration: 0,
+            frames: Vec::new(),
+            #[cfg(test)]
+            examined: 0,
+        })
     };
-    let current = context.rule.as_ref();
-    let mut levels = 1;
-    let mut header_seen = false;
-    let mut above: Option<&str> = None;
-    let rules = current.into_iter().chain(context.rule_stack.iter().rev());
-    for (index, rule) in rules.enumerate() {
-        let name: &str = rule.name.as_ref();
-        if is_container(name) {
-            levels += 1;
-        } else if "table" == name && !header_seen {
-            header_seen = true;
-            if 0 == index && current.is_some() {
-                levels += 1 + counter(rule, "table_dive");
+}
+
+/// The levels a rule on the rule stack adds, given the rule below it.
+///
+/// A `map` or `list` is a container: a table's body, an inline table, an
+/// array. A `table` on the stack has its body open, and its path, kept in
+/// its `u` bag, is exact, arrays of tables included; its body is a `map`
+/// INSIDE the table at the end of that path, not a level of its own, so a
+/// `map` directly above a `table` adds nothing (the root's body included,
+/// at path length zero).
+///
+/// A `dive` on the stack is a dotted key waiting for its value, and its
+/// path counts the tables the key has descended through from the table it
+/// is in: the cell of the table body or inline table that holds the key,
+/// or the root table's when the root table pushed the dive itself. So
+/// every key still open counts, and a key in an inline table that is the
+/// value of another key counts on from that key, however the parse
+/// reached it. A counter cannot say the same: the dive's close loop takes
+/// the next dotted key in the same frame and has to begin it from the
+/// table it is in, and a counter the loop reset lost the tables of every
+/// key further out with it. A dotted key on a new line of an inline table
+/// once counted from zero that way.
+fn frame_levels(rule: &Rc<RuleSnapshot>, below: Option<&Rc<RuleSnapshot>>) -> usize {
+    match rule.name.as_ref() {
+        "map" => usize::from(below.is_none_or(|below| "table" != below.name.as_ref())),
+        "list" => 1,
+        "table" | "dive" => node::snapshot_path(Some(rule)).len(),
+        _ => 0,
+    }
+}
+
+/// The levels the rule the loop is working on adds, given the top of the
+/// rule stack. The engine hands that rule over apart from the stack, and
+/// at the start of its step, before any of its actions have run.
+///
+/// A `table` that is the current rule is still reading its header, one
+/// segment per replacement, and a replacement inherits counters but not
+/// `u`, so its path says nothing yet: there the `table_dive` counter, the
+/// segments entered so far, plus the one being read, say how deep the
+/// header has got, so a header is refused at the segment that passes the
+/// limit and never builds a value past it. A `dive` that is still open
+/// has not run `@dive-bo`, which records its path, yet: it stands where
+/// the segment it replaced left off when it continues a key, and has
+/// descended through nothing when it begins one. So a dotted key is
+/// refused at the segment past the limit too.
+fn current_levels(rule: &Rc<RuleSnapshot>, below: Option<&Rc<RuleSnapshot>>) -> usize {
+    match rule.name.as_ref() {
+        "table" => {
+            let entered = rule.n.get("table_dive").copied().unwrap_or(0);
+            1 + usize::try_from(entered).unwrap_or(0)
+        }
+        "dive" if RuleState::Open == rule.state => {
+            let previous = rule.prev_rule.as_ref();
+            if refs::continues_key(previous) {
+                node::snapshot_path(previous).len()
             } else {
-                levels += node::snapshot_path(Some(rule)).len();
-                if Some("map") == above {
-                    levels -= 1;
-                }
+                0
             }
         }
-        above = Some(name);
+        _ => frame_levels(rule, below),
     }
-    levels + current.map_or(0, |rule| counter(rule, "dive_key"))
 }
 
 /// The depth guard: [`DEPTH_LIMIT`] levels parse, the next one is refused.
@@ -735,5 +841,119 @@ pub fn render_text() -> &'static str {
     match TRANSLATION.render {
         Some(part) => part.source.unwrap_or_default(),
         None => "",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    /// [`depth`] with the stack walked afresh, as it was counted before
+    /// the count was kept from step to step.
+    fn walked(context: &Context) -> usize {
+        let mut levels = 1;
+        let mut below = None;
+        for rule in &context.rule_stack {
+            levels += frame_levels(rule, below);
+            below = Some(rule);
+        }
+        let current = context
+            .rule
+            .as_ref()
+            .map_or(0, |rule| current_levels(rule, below));
+        levels + current
+    }
+
+    fn segments(n: usize) -> String {
+        vec!["a"; n].join(".")
+    }
+
+    #[test]
+    fn the_kept_count_is_the_walked_count_at_every_step() {
+        // The engine turns a panic in a guard into a parse error, so a
+        // difference is written down and asserted after the parses. The
+        // check replaces the crate's own guard, so the count is kept once
+        // per step, as it is in use.
+        let differences = Arc::new(Mutex::new(Vec::new()));
+        let steps = Arc::new(AtomicUsize::new(0));
+        let (seen, stepped) = (differences.clone(), steps.clone());
+        let mut parser = make();
+        parser.parse_guard(DEPTH_GUARD, move |context| {
+            let (kept, walked) = (depth(context), walked(context));
+            if kept != walked {
+                seen.lock().unwrap().push((context.iteration, kept, walked));
+            }
+            stepped.fetch_add(1, Ordering::Relaxed);
+            kept <= DEPTH_LIMIT
+        });
+        let nested = |open: &str, inner: &str, close: &str, n: usize| {
+            format!("{}{inner}{}", open.repeat(n), close.repeat(n))
+        };
+        let sources = [
+            "a = 1".to_string(),
+            "a = 1\nb.c = 2\nd.e.f = 3".to_string(),
+            "a.b = 1\nc.d = 2".to_string(),
+            "[a.b]\nc = 1\n[[d.e]]\nf = {g = [1, {h.i = 2}]}\n[[d.e]]\nj.k = 3".to_string(),
+            "[[a]]\n[[a.b]]\n[[a.b.c]]\nx = 1".to_string(),
+            "k.k = {p.q = 1\nr.s = {t.u = 2\nv.w = 3}}".to_string(),
+            "x = [{p.q = 1\na.b.c = 2}, [[3]]]".to_string(),
+            "a = \"unterminated".to_string(),
+            "a = 1\n[a]".to_string(),
+            "a = ]".to_string(),
+            format!("{} = 1", segments(127)),
+            format!("{} = 1", segments(128)),
+            format!("[{}]\nx = 1", segments(127)),
+            format!("x = {}", nested("[", "", "]", 127)),
+            format!("x = {}", nested("{a = ", "1", "}", 130)),
+            format!("{} = {{p.q = 1\n{} = 1}}", segments(100), segments(28)),
+            nested(&format!("{} = {{p.q = 1\n", segments(25)), "z = 1", "}", 6),
+        ];
+        // Twice over, so each parse also follows one that ended, some of
+        // them in an error, on the same thread.
+        for source in sources.iter().chain(sources.iter()) {
+            let _ = parser.parse(source);
+        }
+        let steps = steps.load(Ordering::Relaxed);
+        assert!(steps > 3_000, "{steps} steps");
+        assert_eq!(*differences.lock().unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn a_step_counts_what_changed_not_the_whole_stack() {
+        // Arrays 120 deep put about 360 rules on the stack: a `val`, a
+        // `list` and an `elem` a level. Counting all of them at every
+        // step looked at a hundred frames a step or more, and the kept
+        // count looks at one or two. The work is counted rather than
+        // timed: in a debug build the engine checks every buried frame at
+        // every step, which would swamp a timing.
+        let steps = Arc::new(AtomicUsize::new(0));
+        let walk = Arc::new(AtomicUsize::new(0));
+        let (stepped, walked) = (steps.clone(), walk.clone());
+        let mut parser = make();
+        parser.parse_guard(DEPTH_GUARD, move |context| {
+            stepped.fetch_add(1, Ordering::Relaxed);
+            walked.fetch_add(context.rule_stack.len(), Ordering::Relaxed);
+            within_depth_limit(context)
+        });
+        let levels = 120;
+        let src = format!("x = {}1{}", "[".repeat(levels), "]".repeat(levels));
+        let examined = || STACK_COUNT.with(|count| count.borrow().examined);
+        let before = examined();
+        parser.parse(&src).expect("parses");
+        let work = examined() - before;
+        let steps = steps.load(Ordering::Relaxed);
+        let walk = walk.load(Ordering::Relaxed);
+        assert!(steps > 2 * levels, "{steps} steps");
+        assert!(
+            walk > levels / 2 * steps,
+            "a shallow stack: {walk} frames in {steps} steps"
+        );
+        assert!(
+            work <= 3 * steps,
+            "{work} frames looked at in {steps} steps"
+        );
     }
 }

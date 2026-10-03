@@ -785,11 +785,17 @@ a deliberate behaviour change.
 The Rust crate alone also stops a parse nested past 127 levels with the
 engine's `cancel`, through a parse guard of its own (`DEPTH_GUARD` in
 `rs/src/lib.rs`, replacing the one jsonic installs under that name), as
-the jsonic, JSON and YAML crates do: a dotted key, a header, an array of
-tables and an inline table all count. TypeScript and Go have no limit,
-and the two rows of `test/divergent.tsv` record the difference as
-permanent. The grammar's two dives are replace loops, so that bound is on
-the value's nesting and never on a document's length.
+the jsonic, JSON and YAML crates do. Every container the value sits in
+counts, the root table first: each table a dotted key or a header nests
+through, an array of tables and its element, an inline table, an array.
+A dotted key inside an inline table counts on from the keys outside it,
+whether a comma, a space or a newline comes before it. TypeScript and Go
+have no limit, and the two rows of `test/divergent.tsv` record the
+difference as permanent. The grammar's two dives are replace loops, so
+that bound is on the value's nesting and never on a document's length.
+Lifting the guard by name lifts every bound, jsonic's on inline tables
+and arrays included, because this guard replaced it; `rs/AGENTS.md` says
+what that costs a caller.
 
 Every runner asserts the code, not just the failure, and there are no
 allowances: the Go runner's `MatchError` (`go/toml_tsv_test.go`) compares
