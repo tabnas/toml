@@ -407,13 +407,20 @@ describe('toml', () => {
     const toml = new Tabnas().use(jsonic).use(Toml)
     const norm = (v: any) => JSON.parse(JSON.stringify(v))
 
-    // Each of these crashed with an uncaught TypeError before the repair.
-    const conflicts = [
-      'a = {b = 1, b.c = 2}',
-      'a = {b = "s", b.c = 2}',
-      'a = 1\n[a.b]\nc = 2',
-      'a = 1\n[[a]]\nb = 2',
-      '[a]\nb = 1\n[[a.b]]\nc = 2',
+    // Each refusal points at the key being redefined, row:col, as the Go
+    // and Rust ports' do (go/key_conflict_test.go, rs/tests/toml_test.rs
+    // assert the same positions). A header's conflict read 1:1 here until
+    // 2026-10-03: it was raised on `ctx.t0`, which the engine has emptied
+    // by the time an alternate's action runs.
+    //
+    // Each of the first five crashed with an uncaught TypeError before the
+    // repair.
+    const conflicts: [string, string][] = [
+      ['a = {b = 1, b.c = 2}', '1:13'],
+      ['a = {b = "s", b.c = 2}', '1:15'],
+      ['a = 1\n[a.b]\nc = 2', '2:2'],
+      ['a = 1\n[[a]]\nb = 2', '2:3'],
+      ['[a]\nb = 1\n[[a.b]]\nc = 2', '3:5'],
 
       // Redefining an array-of-tables as a table. These did NOT crash: both
       // ports accepted them and both silently DESTROYED data, in opposite
@@ -422,11 +429,35 @@ describe('toml', () => {
       // dropped the first. Silent data loss on an invalid document is worse
       // than the TypeError above, because nothing at all reports it.
       // corpus: array/tables-02, table/duplicate-key-07.
-      '[[fruit]]\nname = "apple"\n[[fruit.variety]]\n' +
-      'name = "red delicious"\n[fruit.variety]\nname = "granny smith"',
-      '[[x]]\na = 1\n[x]\nb = 2',
+      ['[[fruit]]\nname = "apple"\n[[fruit.variety]]\n' +
+        'name = "red delicious"\n[fruit.variety]\nname = "granny smith"', '5:8'],
+      ['[[x]]\na = 1\n[x]\nb = 2', '3:2'],
+
+      // The four shapes every port accepted until 2026-10-03: a key given a
+      // second value (the base grammar's rule, last wins and tables merged,
+      // is relaxed JSON's and not TOML's), the same inside an inline
+      // table, a header written twice, and a header for a table a dotted
+      // key had defined. None of these crashed or lost data; they built
+      // a value TOML says does not exist.
+      ['a = 1\na = 2', '2:1'],
+      ['a.b = 1\na.b = 2', '2:3'],
+      ['a = {b = 1, b = 2}', '1:13'],
+      ['[a]\n[a]', '2:2'],
+      ['a.b = 1\n[a]\nc = 2', '2:2'],
+      ['[a]\nb.c = 1\n[a.b]\nd = 2', '3:4'],
+      ['a = {}\n[a]', '2:2'],
+
+      // A key the table already holds from an earlier header. The body is
+      // parsed into a map of its own and merged into the table at its end,
+      // and the merge used to replace the key: `c` lost, the array lost.
+      // The last is a dotted key walking `x.a`, which `[x.a.b]`'s prefix
+      // created and a later `[x.a]` used to define.
+      ['[a.b]\nc = 1\n[a]\nb = 2', '4:1'],
+      ['[a.b.c]\nz = 9\n[a]\nb.c.t = 1', '4:1'],
+      ['[[a.b]]\n[a]\nb.y = 2', '3:1'],
+      ['[x.a.b]\n[x]\na.c = 1\n[x.a]', '3:1'],
     ]
-    for (const src of conflicts) {
+    for (const [src, at] of conflicts) {
       let caught: any = null
       try {
         toml.parse(src)
@@ -440,16 +471,28 @@ describe('toml', () => {
         `${JSON.stringify(src)}: rejected as ` +
         `${caught.code ?? caught.constructor.name} — a rejection carrying no ` +
         'code is the uncaught crash this replaced, not a diagnosis')
+      equal(`${caught.lineNumber}:${caught.columnNumber}`, at,
+        `${JSON.stringify(src)}: points away from the key being redefined`)
     }
 
     // Controls. Descending into an existing TABLE, or into the last element
     // of an existing array-of-tables, is legitimate and must NOT read as a
     // conflict: four valid corpus documents do exactly this, and a first cut
-    // of the check rejected all four.
+    // of the check rejected all four. A header may define the table its own
+    // prefix created, once, and a new sub-table under a table a dotted key
+    // made; its body may add a key the table does not hold yet; and a
+    // body's own table may share its name with a header's implicit table
+    // elsewhere.
     const allowed: [string, any][] = [
       ['a = {b = 1, c = 2}', { a: { b: 1, c: 2 } }],
       ['a = {b.c = 1, b.d = 2}', { a: { b: { c: 1, d: 2 } } }],
       ['[[x]]\ny = 1\n[x.z]\nw = 2', { x: [{ y: 1, z: { w: 2 } }] }],
+      ['[a.b]\nc = 1\n[a]\nd = 2', { a: { b: { c: 1 }, d: 2 } }],
+      ['[[a.b]]\n[a]', { a: { b: [{}] } }],
+      ['[a]\nb.c = 1\n[a.b.d]\ne = 2', { a: { b: { c: 1, d: { e: 2 } } } }],
+      ['[a.b.c]\n[a]\nd = 1', { a: { b: { c: {} }, d: 1 } }],
+      ['[a.b]\n[c]\na.x = 1\na.y = 2\n[a]',
+        { a: { b: {} }, c: { a: { x: 1, y: 2 } } }],
     ]
     for (const [src, want] of allowed) {
       equal(norm(toml.parse(src)), want,
@@ -508,6 +551,135 @@ describe('toml', () => {
       equal(diag.col, col,
         `${label}: ${JSON.stringify(src)} col — Go says ${go}`)
     }
+  })
+
+  // Rows after a multi-line string (tabnas/toml#85). A multi-line string
+  // trims the line feed right after its opening delimiter, and a
+  // line-ending backslash trims the one right after it; both are still
+  // lines of the source. This matcher used to consume each without
+  // counting a row, so every token and every diagnostic after such a
+  // string was reported one row early, per multi-line string before it.
+  // Rust, whose matcher hands the engine a count of characters, was right
+  // all along. go/strmatcher_row_test.go and
+  // rows_after_a_multi_line_string_count_its_trimmed_line_feeds in
+  // rs/tests/toml_test.rs assert the same rows.
+  test('rows after a multi-line string count its trimmed line feeds', () => {
+    const cases: [string, string, number, number][] = [
+      // Control: a multi-line string that trims nothing.
+      ['no trim', 'a = """x"""\nb = ]', 2, 5],
+      ['basic', 'a = """\nx"""\nb = ]', 3, 5],
+      ['literal', "a = '''\nx'''\nb = ]", 3, 5],
+      // One row early PER string before the error.
+      ['two strings', 'a = """\nx"""\nb = """\ny"""\nc = ]', 5, 5],
+      // The line feed a line-ending backslash trims, then one it trims
+      // after that.
+      ['backslash', 'a = """\nx\\\n  y"""\nb = ]', 4, 5],
+      ['backslash, blank line', 'a = """\nx\\\n\n  y"""\nb = ]', 5, 5],
+    ]
+
+    for (const [label, src, row, col] of cases) {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      let err: any = null
+      try {
+        t.parse(src)
+      }
+      catch (e) {
+        err = e
+      }
+      ok(null != err, `${label}: ${JSON.stringify(src)} parsed, expected a diagnostic`)
+      const diag = JSON.parse(JSON.stringify(err))
+      equal([diag.row, diag.col], [row, col],
+        `${label}: ${JSON.stringify(src)} row:col`)
+    }
+  })
+
+  // The tokens themselves, as the lex trace a highlighter reads them: a
+  // string token's point is the cursor AFTER the string, so it sits on the
+  // row the string ends on, and the token after it starts on the next row.
+  // The empty string carries its two quote characters as its source, as
+  // every other string token carries its text; it used to carry nothing,
+  // and a reader placing tokens by source length could not place it. Go
+  // and Rust assert the same six traces.
+  test('string tokens carry their source and end on the row they end on', () => {
+    const trace = (src: string) => {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      const seen: string[] = []
+      t.sub({
+        lex: (tkn: any) => {
+          if ('#ST' === tkn.name || '#ID' === tkn.name) {
+            seen.push(`${tkn.name}${JSON.stringify(tkn.src)}@${tkn.rI}:${tkn.cI}`)
+          }
+        },
+      })
+      t.parse(src)
+      return seen.join(' ')
+    }
+    const raw = String.raw
+    equal(trace('a = """\nx"""\nb = 1'),
+      raw`#ID"a"@1:1 #ST"\"\"\"\nx\"\"\""@2:5 #ID"b"@3:1`)
+    equal(trace("a = '''\nx'''\nb = 1"),
+      raw`#ID"a"@1:1 #ST"'''\nx'''"@2:5 #ID"b"@3:1`)
+    equal(trace('a = """\nx\\\n  y"""\nb = 1'),
+      raw`#ID"a"@1:1 #ST"\"\"\"\nx\\\n  y\"\"\""@3:7 #ID"b"@4:1`)
+    equal(trace('a = ""\nb = 1'), raw`#ID"a"@1:1 #ST"\"\""@1:7 #ID"b"@2:1`)
+    equal(trace("a = ''\nb = 1"), raw`#ID"a"@1:1 #ST"''"@1:7 #ID"b"@2:1`)
+    equal(trace('"" = 1'), raw`#ST"\"\""@1:3`)
+  })
+
+  // Columns after a multi-line string that ends with extra quotes. Up to
+  // two quotes after the closing delimiter belong to the value, so
+  // `"""x""""` is `x"`, and each is a column of the source too. This
+  // matcher consumed them without counting their columns, so everything
+  // after such a string was placed one column early per extra quote. Rust
+  // counts the token's characters and was right. The register row
+  // `a = '''x''''''''''''''`, 1:18 here and in Go against 1:22 in Rust, was
+  // this defect and not the engine's lookahead, and it closed with it.
+  // go/strmatcher_quotes_test.go
+  // and columns_after_a_multi_line_string_count_its_extra_quotes in
+  // rs/tests/toml_test.rs assert the same positions and traces.
+  test('columns after a multi-line string count its extra quotes', () => {
+    const cases: [string, string, number, number][] = [
+      // Control: no extra quote.
+      ['none', 'a = """x""" ]', 1, 13],
+      ['one', 'a = """x"""" ]', 1, 14],
+      ['two', 'a = """x""""" ]', 1, 15],
+      ['literal, one', "a = '''x'''' ]", 1, 14],
+      ['literal, two', "a = '''x''''' ]", 1, 15],
+    ]
+
+    for (const [label, src, row, col] of cases) {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      let err: any = null
+      try {
+        t.parse(src)
+      }
+      catch (e) {
+        err = e
+      }
+      ok(null != err, `${label}: ${JSON.stringify(src)} parsed, expected a diagnostic`)
+      const diag = JSON.parse(JSON.stringify(err))
+      equal([diag.row, diag.col], [row, col],
+        `${label}: ${JSON.stringify(src)} row:col`)
+    }
+
+    const trace = (src: string) => {
+      const t = new Tabnas().use(jsonic).use(Toml)
+      const seen: string[] = []
+      t.sub({
+        lex: (tkn: any) => {
+          if ('#ST' === tkn.name || '#ID' === tkn.name) {
+            seen.push(`${tkn.name}${JSON.stringify(tkn.src)}@${tkn.rI}:${tkn.cI}`)
+          }
+        },
+      })
+      t.parse(src)
+      return seen.join(' ')
+    }
+    const raw = String.raw
+    equal(trace('a = """x""""\nb = 1'),
+      raw`#ID"a"@1:1 #ST"\"\"\"x\"\"\"\""@1:13 #ID"b"@2:1`)
+    equal(trace("a = '''x'''''\nb = 1"),
+      raw`#ID"a"@1:1 #ST"'''x'''''"@1:14 #ID"b"@2:1`)
   })
 })
 

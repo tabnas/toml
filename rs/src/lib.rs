@@ -426,7 +426,7 @@ fn adjust_messages(options: &mut Map<String, Json>) {
     options.insert(
         "hint".to_string(),
         json!({
-            "toml_key_conflict": "\nTOML does not allow a key to be redefined, and a key that already holds a\nvalue is not a table you can add to. This usually means the same name was\nused twice - as a value and then as a table or table-array header, or twice\ninside one inline table.",
+            "toml_key_conflict": "\nTOML does not allow a key to be redefined, and a key that already holds a\nvalue is not a table you can add to. This usually means the same name was\nused twice: a key given a second value, a table or table-array header over a\nkey that already holds a value, a header written a second time, a header for\na table that a dotted key or an inline table had already defined, or the same\nname twice inside one inline table.",
             "invalid_datetime": "\nThe value has the shape of a date or time, but one of its components is out\nof range: month 1-12, day 1 to the length of that month, hour 0-23, minute\nand second 0-59 (a second may be 60, for a leap second), and the same limits\nagain for a +hh:mm offset. February is checked against the actual year, so\n2100-02-29 is rejected - 2100 is not a leap year.",
         }),
     );

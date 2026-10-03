@@ -125,6 +125,29 @@ two ports, handed `r.prev.node` by reference, take milliseconds
   containers are recorded and written in ONE walk when the header ends,
   when an action fails (so a diagnostic is raised over the same tree as
   before), or before anything else reads or writes the tree (`settle`).
+- **A table's history is a trie, not a path lookup.** A header may define
+  an existing table only when a header's prefix created it and no header
+  has defined it yet (`[a.b]` then `[a]`; `[a]` twice, `a.b = 1` then `[a]`
+  and `a = {}` then `[a]` are `toml_key_conflict`). The other two ports
+  keep those tables in a set of nodes; a node here is a path, and a path
+  copied or serialised per segment would make a header quadratic again.
+  So the cursor also carries a number: its node in a trie over the tree's
+  paths, flat in one map in the context's `u` bag (`toml_implicit`), whose
+  entry for a child is keyed by the parent's number and the segment and
+  holds the child's number and the implicit flag. One hash lookup per
+  segment, whatever the depth. A table body and an inline table are cells
+  of their own, and their paths number from the same root node, so a
+  body's own `a` shares its trie node with the document's `a`. Only a
+  cursor on the document's own cell may change a mark: `@toml-bo` records
+  that cell (`toml_root`), and a dotted key that walks through a table
+  clears the table's mark only there. A clear without that check refuses
+  valid TOML: `[a.b]`, then `[c]` with `a.x = 1` and `a.y = 2`, then `[a]`,
+  because the second dotted key clears the document's mark on `a`;
+  `key_conflicts_are_diagnosed` holds that document legal, and fails when
+  the check is taken out. Marks are kept by path, so a table the merge of
+  a body replaced kept the old table's mark; the merge only adds keys now,
+  because `body_conflict` in `refs.rs` refuses a key at the top of a body
+  that the table already holds.
 
 The document is the same, table for table and key for key, because each
 table is created in the same container, under the same key, in the same
@@ -412,19 +435,6 @@ it reads them as "records no divergence" and they assert nothing.
 comparator that stops distinguishing positions does not fail, it just
 makes the register vacuous. When `tabnas_support` compares positions,
 delete the local comparator in all three halves together.
-
-## The remaining lookahead divergence is positional
-
-The engine now remembers a later `TIN_BD` token while matching alternates
-and preserves its diagnosis when none match. That closed two former rows
-of `../test/divergent.tsv` and the code difference in the third.
-
-One position difference remains. For
-`a = '''x''''''''''''''`, leftovers from the first literal string re-lex
-into a second `#ST`. TypeScript and Go report
-`unterminated_string@1:18`, while this port reports the same code at
-`1:22`, the re-lexed token's end. The register pins that position until
-the engines agree about which point represents this failure.
 
 ## The conformance suite never skips
 

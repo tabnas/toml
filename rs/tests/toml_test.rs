@@ -9,6 +9,7 @@
 
 mod common;
 
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use tabnas::{Tabnas, Value};
@@ -441,6 +442,166 @@ fn a_key_the_close_loop_takes_counts_from_the_keys_outside() {
     refused(&in_array(125));
 }
 
+/// Rows after a multi-line string (tabnas/toml#85). A multi-line string
+/// trims the line feed right after its opening delimiter, and a
+/// line-ending backslash trims the one right after it; both are still
+/// lines of the source. The TypeScript and Go matchers own their row and
+/// column arithmetic and consumed each of those line feeds without
+/// counting a row, so every token and every diagnostic after such a string
+/// was reported one row early there, per multi-line string before it. This
+/// port hands the engine a count of characters and was right; the test
+/// keeps it so. Both other ports assert the same rows.
+#[test]
+fn rows_after_a_multi_line_string_count_its_trimmed_line_feeds() {
+    for (label, src, row, col) in [
+        // Control: a multi-line string that trims nothing.
+        ("no trim", "a = \"\"\"x\"\"\"\nb = ]", 2, 5),
+        ("basic", "a = \"\"\"\nx\"\"\"\nb = ]", 3, 5),
+        ("literal", "a = '''\nx'''\nb = ]", 3, 5),
+        // One row early PER string before the error.
+        (
+            "two strings",
+            "a = \"\"\"\nx\"\"\"\nb = \"\"\"\ny\"\"\"\nc = ]",
+            5,
+            5,
+        ),
+        // The line feed a line-ending backslash trims, then one it trims
+        // after that.
+        ("backslash", "a = \"\"\"\nx\\\n  y\"\"\"\nb = ]", 4, 5),
+        (
+            "backslash, blank line",
+            "a = \"\"\"\nx\\\n\n  y\"\"\"\nb = ]",
+            5,
+            5,
+        ),
+    ] {
+        let error = parse(src)
+            .err()
+            .unwrap_or_else(|| panic!("{label}: {src:?} parsed, expected a diagnostic"));
+        assert_eq!(
+            (error.row, error.col),
+            (row, col),
+            "{label}: {src:?} row:col"
+        );
+    }
+}
+
+/// The tokens themselves, as the lex trace a highlighter reads them: a
+/// string token's point is the cursor AFTER the string (see
+/// `strmatcher::end`), so it sits on the row the string ends on, and the
+/// token after it starts on the next row. The empty string carries its two
+/// quote characters as its source, as every other string token carries its
+/// text. TypeScript and Go assert the same six traces.
+#[test]
+fn string_tokens_carry_their_source_and_end_on_the_row_they_end_on() {
+    let trace = |src: &str| {
+        let mut parser = make();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        parser.subscribe_lex(move |token, _rule, _context| {
+            let name = token.name.as_str();
+            if "#ST" == name || "#ID" == name {
+                sink.lock().expect("the trace is whole").push(format!(
+                    "{name}{:?}@{}:{}",
+                    token.src.as_str(),
+                    token.site.ri,
+                    token.site.ci
+                ));
+            }
+        });
+        parser
+            .parse(src)
+            .unwrap_or_else(|error| panic!("{src:?}: {error}"));
+        let traced = seen.lock().expect("the trace is whole").join(" ");
+        traced
+    };
+    for (src, want) in [
+        (
+            "a = \"\"\"\nx\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"\nx\"\"\""@2:5 #ID"b"@3:1"#,
+        ),
+        (
+            "a = '''\nx'''\nb = 1",
+            r#"#ID"a"@1:1 #ST"'''\nx'''"@2:5 #ID"b"@3:1"#,
+        ),
+        (
+            "a = \"\"\"\nx\\\n  y\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"\nx\\\n  y\"\"\""@3:7 #ID"b"@4:1"#,
+        ),
+        ("a = \"\"\nb = 1", r#"#ID"a"@1:1 #ST"\"\""@1:7 #ID"b"@2:1"#),
+        ("a = ''\nb = 1", r#"#ID"a"@1:1 #ST"''"@1:7 #ID"b"@2:1"#),
+        ("\"\" = 1", r#"#ST"\"\""@1:3"#),
+    ] {
+        assert_eq!(trace(src), want, "{src:?}");
+    }
+}
+
+/// Columns after a multi-line string that ends with extra quotes. Up to
+/// two quotes after the closing delimiter belong to the value, so
+/// `"""x""""` is `x"`, and each is a column of the source too. The
+/// TypeScript and Go matchers own their column arithmetic and consumed
+/// those quotes without counting their columns, so everything after such
+/// a string was placed one column early per extra quote there. This port
+/// counts the token's characters and was right; the test keeps it so. The
+/// register row `a = '''x''''''''''''''`, 1:18 in the other two ports
+/// against 1:22 here, was that defect and not the engine's lookahead, and
+/// it closed with it. Both other ports assert the same positions and
+/// traces.
+#[test]
+fn columns_after_a_multi_line_string_count_its_extra_quotes() {
+    for (label, src, row, col) in [
+        // Control: no extra quote.
+        ("none", "a = \"\"\"x\"\"\" ]", 1, 13),
+        ("one", "a = \"\"\"x\"\"\"\" ]", 1, 14),
+        ("two", "a = \"\"\"x\"\"\"\"\" ]", 1, 15),
+        ("literal, one", "a = '''x'''' ]", 1, 14),
+        ("literal, two", "a = '''x''''' ]", 1, 15),
+    ] {
+        let error = parse(src)
+            .err()
+            .unwrap_or_else(|| panic!("{label}: {src:?} parsed, expected a diagnostic"));
+        assert_eq!(
+            (error.row, error.col),
+            (row, col),
+            "{label}: {src:?} row:col"
+        );
+    }
+
+    let trace = |src: &str| {
+        let mut parser = make();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        parser.subscribe_lex(move |token, _rule, _context| {
+            let name = token.name.as_str();
+            if "#ST" == name || "#ID" == name {
+                sink.lock().expect("the trace is whole").push(format!(
+                    "{name}{:?}@{}:{}",
+                    token.src.as_str(),
+                    token.site.ri,
+                    token.site.ci
+                ));
+            }
+        });
+        parser
+            .parse(src)
+            .unwrap_or_else(|error| panic!("{src:?}: {error}"));
+        let traced = seen.lock().expect("the trace is whole").join(" ");
+        traced
+    };
+    for (src, want) in [
+        (
+            "a = \"\"\"x\"\"\"\"\nb = 1",
+            r#"#ID"a"@1:1 #ST"\"\"\"x\"\"\"\""@1:13 #ID"b"@2:1"#,
+        ),
+        (
+            "a = '''x'''''\nb = 1",
+            r#"#ID"a"@1:1 #ST"'''x'''''"@1:14 #ID"b"@2:1"#,
+        ),
+    ] {
+        assert_eq!(trace(src), want, "{src:?}");
+    }
+}
+
 // --- key names that are not special -------------------------------------
 
 /// `__proto__` is an ordinary key. It is inert in Rust, where a map has
@@ -484,13 +645,85 @@ fn proto_named_keys_are_ordinary() {
 
 /// TOML forbids redefining a key. These are DIAGNOSED rejections, with a
 /// code and a position, rather than internal crashes, which is what the
-/// `diagnosed` column of ../test/conformance.tsv counts.
+/// `diagnosed` column of ../test/conformance.tsv counts. The position is
+/// the key being redefined, as the Go and TypeScript ports report it; the
+/// last eleven are shapes every port accepted until 2026-10-03: a key
+/// given a second value, the same inside an inline table, a header written
+/// twice, a header for a table a dotted key or an inline table had
+/// defined, and a key a table already holds from an earlier header, which
+/// the merge of the table's body used to replace.
 #[test]
 fn key_conflicts_are_diagnosed() {
-    for src in [
-        "a = 1\n[a.b]\nc = 2",
-        "[[a]]\nx = 1\n[a]\ny = 2",
-        "a = 1\n[[a]]\nx = 1",
+    for (src, detail, at) in [
+        (
+            "a = 1\n[a.b]\nc = 2",
+            "cannot define a, it already has the value 1",
+            "2:2",
+        ),
+        (
+            "[[a]]\nx = 1\n[a]\ny = 2",
+            "cannot define a, it is already an array of tables",
+            "3:2",
+        ),
+        (
+            "a = 1\n[[a]]\nx = 1",
+            "cannot define a, it already has the value 1",
+            "2:3",
+        ),
+        (
+            "a = 1\na = 2",
+            "cannot define a, it already has the value 1",
+            "2:1",
+        ),
+        (
+            "a.b = 1\na.b = 2",
+            "cannot define b, it already has the value 1",
+            "2:3",
+        ),
+        (
+            "a = {b = 1, b = 2}",
+            "cannot define b, it already has the value 1",
+            "1:13",
+        ),
+        ("[a]\n[a]", "cannot define a, it is already defined", "2:2"),
+        (
+            "a.b = 1\n[a]\nc = 2",
+            "cannot define a, it is already defined",
+            "2:2",
+        ),
+        (
+            "[a]\nb.c = 1\n[a.b]\nd = 2",
+            "cannot define b, it is already defined",
+            "3:4",
+        ),
+        (
+            "a = {}\n[a]",
+            "cannot define a, it is already defined",
+            "2:2",
+        ),
+        (
+            "[a.b]\nc = 1\n[a]\nb = 2",
+            r#"cannot define b, it already has the value {"c":1}"#,
+            "4:1",
+        ),
+        (
+            "[a.b.c]\nz = 1\n[a]\nb.c.t = 2",
+            r#"cannot define b, it already has the value {"c":{"z":1}}"#,
+            "4:1",
+        ),
+        (
+            "[[a.b]]\n[a]\nb.y = 2",
+            "cannot define b, it already has the value [{}]",
+            "3:1",
+        ),
+        // A dotted key walking `x.a`, which `[x.a.b]`'s prefix created. The
+        // marks are kept by path here, and `[x.a]` used to read the one
+        // `[x.a.b]` left after the body had replaced the table at `x.a`.
+        (
+            "[x.a.b]\n[x]\na.c = 1\n[x.a]",
+            r#"cannot define a, it already has the value {"b":{}}"#,
+            "3:1",
+        ),
     ] {
         let error = parse(src)
             .err()
@@ -500,6 +733,39 @@ fn key_conflicts_are_diagnosed() {
             error.to_string().contains("cannot define"),
             "{src:?}: the code has no message template: {error}"
         );
+        // The number renders as the engine's `to_json` writes it, `1.0`
+        // for a value that is an integer in the source; the words around
+        // it are the canonical port's.
+        assert_eq!(detail, error.detail.replace("1.0", "1"), "{src:?}");
+        assert_eq!(at, format!("{}:{}", error.row, error.col), "{src:?}");
+    }
+
+    // A header may define the table its own prefix created, once, and a new
+    // sub-table under a table a dotted key made; a dotted key extends the
+    // table it made; a later header's body adds a key its table does not
+    // hold yet. None of these is a conflict. The last one is a body's own
+    // `a`, whose path from the body's cell has the same trie node as the
+    // implicit `a` at the top of the document: a dotted key walking it must
+    // not clear that mark, or `[a]` is refused.
+    for (src, want) in [
+        (
+            "[a.b]\nc = 1\n[a]\nd = 2",
+            r#"{"a":{"b":{"c":1.0},"d":2.0}}"#,
+        ),
+        ("[[a.b]]\n[a]", r#"{"a":{"b":[{}]}}"#),
+        (
+            "[a]\nb.c = 1\n[a.b.d]\ne = 2",
+            r#"{"a":{"b":{"c":1.0,"d":{"e":2.0}}}}"#,
+        ),
+        ("a.b = 1\na.c = 2", r#"{"a":{"b":1.0,"c":2.0}}"#),
+        ("[a.b.c]\n[a]\nd = 1", r#"{"a":{"b":{"c":{}},"d":1.0}}"#),
+        (
+            "[a.b]\n[c]\na.x = 1\na.y = 2\n[a]",
+            r#"{"a":{"b":{}},"c":{"a":{"x":1.0,"y":2.0}}}"#,
+        ),
+    ] {
+        let value = parse(src).unwrap_or_else(|error| panic!("{src:?} must still parse: {error}"));
+        assert_eq!(want, value.to_json().to_string(), "{src:?}");
     }
 }
 
