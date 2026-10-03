@@ -191,15 +191,11 @@ has no way to say what JavaScript says:
   requires exactly four hexadecimal digits, so `"\u12g4"` is not a TOML
   document and Go is the only one of the three that says so. The ports
   that move are TypeScript and this one.
-- **A bad token reached in lookahead reports `unexpected`.** When an
-  alternate needs two tokens and the second is a bad token from the
-  lexer, the other two ports raise that token's own code, such as
-  `unterminated_string` for `["abc`, and this port names the first token
-  instead. The engine builds its "no alternate matched" error from that
-  first token, so the diagnosis of a later one is lost. Six documents of
-  the conformance corpus land here, every one of them still rejected, and
-  the three rows in [`../test/divergent.tsv`](../test/divergent.tsv) pin
-  the difference until the engine repair lands.
+- **One re-lexed bad token has a different position.** The engine preserves
+  a later bad token's diagnosis. For one literal-string value whose
+  leftovers re-lex into another string, this port reports that token's end
+  while TypeScript and Go report the original failure point. The row in
+  [`../test/divergent.tsv`](../test/divergent.tsv) pins the difference.
 
 ## Build and test
 
