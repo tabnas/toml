@@ -2,6 +2,7 @@ package tabnastoml
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -172,12 +173,11 @@ func TestDottedHeaderIsLinear(t *testing.T) {
 
 // TestLongDottedHeaderValue: a header thousands of segments long builds
 // exactly the tables it names, and later headers walk back down through
-// them: one adds a table beside the first one's key, and two arrays of
-// tables append to the same array. Mirrors
+// them: one adds a table beside the first one's key, two arrays of tables
+// append to the same array, and one that treats a key holding a value as a
+// table is refused, with the same diagnosis a short header gets. Mirrors
 // a_long_dotted_header_builds_every_table_it_names in rs/tests/perf_test.rs
-// and ts/test/perf.test.ts, which also refuse a header that treats a key
-// holding a value as a table; this port does not diagnose key conflicts
-// (see "Error codes" in AGENTS.md), so that half is theirs alone.
+// and ts/test/perf.test.ts.
 func TestLongDottedHeaderValue(t *testing.T) {
 	const depth = 5000
 	keys := make([]string, depth)
@@ -204,5 +204,14 @@ func TestLongDottedHeaderValue(t *testing.T) {
 	}
 	if want := `{"x":1,"y":{"z":2},"list":[{"n":1},{"n":2}]}`; string(got) != want {
 		t.Errorf("the innermost table is %s, want %s", got, want)
+	}
+
+	_, err = Parse(src + fmt.Sprintf("[%s.x.q]\n", path))
+	var te *jsonic.JsonicError
+	if !errors.As(err, &te) || te.Code != "toml_key_conflict" {
+		t.Fatalf("x holds a value, so it is not a table to add to; got %v", err)
+	}
+	if want := "cannot define x, it already has the value 1"; !strings.Contains(te.Detail, want) {
+		t.Errorf("the refusal says %q, want %q", te.Detail, want)
 	}
 }

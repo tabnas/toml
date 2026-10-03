@@ -89,6 +89,14 @@ invalid TOML -- the format requires exactly four hexadecimal digits --
 so Go is the only one of the three that is right, and the two that move
 are TypeScript and Rust.
 
+The last row is the **position of a key conflict**. All three ports
+refuse a redefined key with `toml_key_conflict` -- the shared rows are
+`spec/key-conflict.tsv` -- and Go and Rust point at the key being
+redefined, while TypeScript answers `1:1`, because it raises on `ctx.t0`
+after its engine has emptied that slot for the action. **TypeScript is the
+repair target**: the repair is in `ts/src/toml.ts` (raise on the matched
+key token) or in the engine, and the row goes when it lands.
+
 One difference that belongs in the register cannot be written into it. A
 lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds
 to U+FFFD in Go and Rust, whose characters are Unicode scalar values. The

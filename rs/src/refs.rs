@@ -250,10 +250,13 @@ fn register_alt_actions(parser: &mut Tabnas) {
         let cell = cell_of(rule);
         let array = table_array(rule);
         let mut cursor = Cursor::resume(context, &cell, prev_path(rule));
-        let outcome = if cursor.is_list() {
+        // The segment before this one may have descended through an array
+        // of tables; the key is then defined in its LAST table, as a table
+        // for `[a.b.c]` and as an array of tables for `[[a.b.c]]`.
+        if cursor.is_list() {
             cursor.last_of_list(context);
-            cursor.table_at(context, &key, DEFINE)
-        } else if array {
+        }
+        let outcome = if array {
             cursor.array_at(context, &key)
         } else {
             cursor.table_at(context, &key, DEFINE)
