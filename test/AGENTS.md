@@ -57,7 +57,7 @@ audit found 29 recorded claims contradicted by execution.
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
 position; one that has it is compared on both.
 
-The register holds three classes of row today.
+The register holds two classes of row today.
 
 The first two rows are the **astral column unit**, and they are
 *permanent*: TypeScript counts UTF-16 code units, so an astral character
@@ -77,13 +77,15 @@ invalid TOML -- the format requires exactly four hexadecimal digits --
 so Go is the only one of the three that is right, and the two that move
 are TypeScript and Rust.
 
-The last row is the **position of a key conflict**. All three ports
-refuse a redefined key with `toml_key_conflict` -- the shared rows are
-`spec/key-conflict.tsv` -- and Go and Rust point at the key being
-redefined, while TypeScript answers `1:1`, because it raises on `ctx.t0`
-after its engine has emptied that slot for the action. **TypeScript is the
-repair target**: the repair is in `ts/src/toml.ts` (raise on the matched
-key token) or in the engine, and the row goes when it lands.
+Another class, the **position of a key conflict**, closed on 2026-10-03.
+TypeScript answered `1:1` for a header's conflict, raising on `ctx.t0`
+after its engine had emptied that slot for the action, where Go and Rust
+pointed at the key being redefined. `ts/src/toml.ts` raises on the
+matched key token, `r.o0`, now, so every port points at the key, and the
+row was deleted when its TypeScript cell went red. The positions are held
+by each port's own key-conflict test instead: `key-conflict-is-diagnosed`
+in `ts/test/toml.test.ts`, `go/key_conflict_test.go` and
+`key_conflicts_are_diagnosed` in `rs/tests/toml_test.rs`.
 
 One difference that belongs in the register cannot be written into it. A
 lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds

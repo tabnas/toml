@@ -55,6 +55,30 @@ const PATHS_KEY: &str = "toml_paths";
 /// `u` bag.
 const HEADER_KEY: &str = "toml_header";
 
+/// Where the parse keeps the tables a header's prefix created and no header
+/// has yet defined, in the context's `u` bag: the only existing tables a
+/// header may define. A table is told by its PATH, not by its node, which
+/// `Arc::make_mut` may copy under a later write, and a path is looked up in
+/// time independent of its length, as a header's segments are walked, or a
+/// long header would be quadratic again (tabnas/toml#81). So every position
+/// the cursor has stood on is a numbered node of a trie over the tree's
+/// paths, kept flat in one map: the entry for a child is keyed by its
+/// parent's number and the segment (`"7:name"`, `"7:0"`), and holds the
+/// child's number and whether the table there is implicit. The cursor
+/// carries its node's number along with its path. Kept on the context
+/// rather than in the tree, so that a table's history never leaves a mark
+/// on the value a reader gets back.
+const IMPLICIT_KEY: &str = "toml_implicit";
+
+/// Where the parse keeps the address of the document's own cell, in the
+/// context's `u` bag. A header's prefix marks tables in that tree only. A
+/// table body or an inline table is a cell of its own, whose paths are
+/// numbered from the same root node of the trie, so a cursor on any other
+/// cell must leave the marks alone: `[a.b]`, then `[c]` with `a.x = 1` and
+/// `a.y = 2`, walks `c`'s own `a`, and the implicit `a` at the top of the
+/// document has the same trie node.
+const ROOT_KEY: &str = "toml_root";
+
 /// A table path: the first `len` segments of buffer `id` in the parse's
 /// path registry. A segment is a key (a string) into a table, or a
 /// position (a number) into an array of tables.
@@ -270,14 +294,32 @@ pub(crate) fn merge_into(context: &mut Context, cell: &Cell, path: Path, source:
     }
 }
 
-/// Descending THROUGH an array of tables is how `[[x]]` followed by
-/// `[x.y]` works; landing ON one as the thing being defined is `[x]`
-/// trying to redefine `[[x]]`, which is invalid TOML. The grammar already
-/// separates the two: `#DOT`-terminated segments are intermediate,
-/// `#CS`-terminated ones are final.
-pub(crate) const DESCEND: bool = true;
-/// See [`DESCEND`].
-pub(crate) const DEFINE: bool = false;
+/// What a segment asks of the table under its key.
+///
+/// A header like `[fruit.variety]` walks THROUGH `fruit` and DEFINES
+/// `variety`, and a dotted key like `fruit.variety = 1` walks through
+/// `fruit` as well. The three positions have different rules. Descending
+/// through an array of tables is how `[[x]]` followed by `[x.y]` works, and
+/// four valid corpus documents rely on it; landing on one as the thing
+/// being defined is `[x]` trying to redefine `[[x]]`: invalid TOML. A table
+/// a header walks through and finds missing is created implicitly, and TOML
+/// lets one later header define it (`[a.b]` then `[a]`); a table a header
+/// has DEFINED, a dotted key has created or walked through, or an inline
+/// table has made may not be defined by a header again (`[a]` twice,
+/// `a.b = 1` then `[a]`, `a = {}` then `[a]`).
+///
+/// The grammar already separates the positions: `#DOT`-terminated segments
+/// of a header are intermediate, `#CS`-terminated ones are final, and a
+/// dotted key's segments are the `dive` rule's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reach {
+    /// A header's leading segment.
+    Descend,
+    /// A header's last segment.
+    Define,
+    /// A dotted key's leading segment.
+    Dive,
+}
 
 fn conflict(key: &str, why: &str) -> ActionError {
     // The engine renders the code through `options.error`, which this
@@ -288,6 +330,119 @@ fn conflict(key: &str, why: &str) -> ActionError {
 
 fn describe(value: &Value) -> String {
     format!("it already has the value {}", value.to_json())
+}
+
+/// The refusal to give `key` a second value when it already holds
+/// `existing`: `a = 1` then `a = 2`, `a.b = 1` then `a.b = 2`,
+/// `{b = 1, b = 2}`. TOML allows a key one value, and the base grammar's
+/// duplicate-key rule (last wins, tables merged) is not it.
+pub(crate) fn redefined(key: &str, existing: &Value) -> ActionError {
+    conflict(key, &describe(existing))
+}
+
+/// The value under `key` in the table at `path`, when the table has one.
+pub(crate) fn existing_at(
+    context: &mut Context,
+    cell: &Cell,
+    path: Path,
+    key: &str,
+) -> Option<Value> {
+    settle(context, cell);
+    let root = cell.borrow();
+    match at(&root, segments(context, path)) {
+        Some(Value::Object(map)) => match map.get(key) {
+            None | Some(Value::Undefined | Value::Null) => None,
+            Some(existing) => Some(existing.clone()),
+        },
+        _ => None,
+    }
+}
+
+/// The trie over the tree's paths (see [`IMPLICIT_KEY`]), installed on
+/// first use. Nothing else holds a handle on it, so `Arc::make_mut` here
+/// never copies.
+fn trie_mut(context: &mut Context) -> &mut IndexMap<String, Value> {
+    if !matches!(context.u.get(IMPLICIT_KEY), Some(Value::Object(_))) {
+        context.u.insert(
+            IMPLICIT_KEY.to_string(),
+            Value::Object(Arc::new(IndexMap::new())),
+        );
+    }
+    match context.u.get_mut(IMPLICIT_KEY) {
+        Some(Value::Object(trie)) => Arc::make_mut(trie),
+        _ => unreachable!("the trie was installed just above"),
+    }
+}
+
+/// The key of `segment`'s entry under trie node `parent`: the parent's
+/// number, a colon, and the segment. The number ends at the first colon,
+/// so no two (parent, segment) pairs share a key, whatever the segment.
+fn trie_key(parent: usize, segment: &Value) -> String {
+    match segment {
+        Value::String(key) => format!("{parent}:{key}"),
+        other => format!("{parent}:{}", position(other).unwrap_or(0)),
+    }
+}
+
+/// The entry for `segment` under trie node `parent`, made (and not
+/// implicit) when missing: the child's number, and whether the table there
+/// is implicit.
+fn trie_entry(context: &mut Context, parent: usize, segment: &Value) -> (usize, bool) {
+    let key = trie_key(parent, segment);
+    let trie = trie_mut(context);
+    if let Some(Value::Array(entry)) = trie.get(&key) {
+        if let Some(id) = count(entry.first()) {
+            return (id, matches!(entry.get(1), Some(Value::Bool(true))));
+        }
+    }
+    let id = trie.len() + 1;
+    trie.insert(
+        key,
+        Value::Array(Arc::new(vec![number(id), Value::Bool(false)])),
+    );
+    (id, false)
+}
+
+/// The trie node for `segment` under `parent`.
+fn trie_child(context: &mut Context, parent: usize, segment: &Value) -> usize {
+    trie_entry(context, parent, segment).0
+}
+
+/// Record `cell` as the document's own cell (see [`ROOT_KEY`]). Kept as two
+/// halves, as a parked cursor keeps its cell, so the address survives the
+/// trip through an `f64`.
+pub(crate) fn set_root(context: &mut Context, cell: &Cell) {
+    let id = cell_id(cell) as u64;
+    let halves = Value::Array(Arc::new(vec![
+        number((id >> 32) as usize),
+        number((id & 0xffff_ffff) as usize),
+    ]));
+    context.u.insert(ROOT_KEY.to_string(), halves);
+}
+
+/// Whether `cell`, an address as [`cell_id`] gives it, is the document's
+/// own cell.
+fn is_root(context: &Context, cell: usize) -> bool {
+    let Some(Value::Array(halves)) = context.u.get(ROOT_KEY) else {
+        return false;
+    };
+    match (count(halves.first()), count(halves.get(1))) {
+        #[allow(clippy::cast_possible_truncation)]
+        (Some(high), Some(low)) => cell == (((high as u64) << 32) | low as u64) as usize,
+        _ => false,
+    }
+}
+
+/// Record whether the table at `segment` under trie node `parent` is
+/// implicit, and answer whether it was.
+fn set_implicit(context: &mut Context, parent: usize, segment: &Value, implicit: bool) -> bool {
+    let (id, was) = trie_entry(context, parent, segment);
+    let key = trie_key(parent, segment);
+    trie_mut(context).insert(
+        key,
+        Value::Array(Arc::new(vec![number(id), Value::Bool(implicit)])),
+    );
+    was
 }
 
 /// What a header has created and not yet written.
@@ -371,6 +526,9 @@ pub(crate) struct Cursor {
     /// one parked on another.
     cell: usize,
     path: Path,
+    /// The trie node of the position, see [`IMPLICIT_KEY`]: moved with the
+    /// path, one entry per segment.
+    trie: usize,
     here: Here,
     pending: Option<Pending>,
 }
@@ -401,12 +559,16 @@ impl Cursor {
         Cursor::find(context, cell, path)
     }
 
-    fn find(context: &Context, cell: &Cell, path: Path) -> Cursor {
-        let here = at(&cell.borrow(), segments(context, path))
-            .map_or(Here::Absent, |node| Here::Node(node.clone()));
+    fn find(context: &mut Context, cell: &Cell, path: Path) -> Cursor {
+        let parts = segments(context, path).to_vec();
+        let here = at(&cell.borrow(), &parts).map_or(Here::Absent, |node| Here::Node(node.clone()));
+        let trie = parts
+            .iter()
+            .fold(0, |trie, segment| trie_child(context, trie, segment));
         Cursor {
             cell: cell_id(cell),
             path,
+            trie,
             here,
             pending: None,
         }
@@ -452,7 +614,9 @@ impl Cursor {
         let here = self
             .child(key)
             .map_or(Here::Absent, |node| Here::Node(node.clone()));
-        self.path = extend(context, self.path, Value::String(key.to_string()));
+        let segment = Value::String(key.to_string());
+        self.trie = trie_child(context, self.trie, &segment);
+        self.path = extend(context, self.path, segment);
         self.here = here;
     }
 
@@ -471,6 +635,7 @@ impl Cursor {
             _ => false,
         };
         let from = self.path.len;
+        self.trie = trie_child(context, self.trie, &segment);
         self.path = extend(context, self.path, segment);
         if !takes {
             self.here = Here::Absent;
@@ -490,7 +655,8 @@ impl Cursor {
     }
 
     /// The canonical `tableAt(node, key, …)`: the table under `key`, or a
-    /// DIAGNOSED refusal to descend into something that is not one.
+    /// DIAGNOSED refusal to descend into something that is not one, or to
+    /// define a table a second time.
     ///
     /// TOML forbids redefining a key, so `a = {b = 1, b.c = 2}` and `a = 1`
     /// followed by `[a.b]` are invalid documents. Answering with a real
@@ -500,15 +666,21 @@ impl Cursor {
         &mut self,
         context: &mut Context,
         key: &str,
-        descend: bool,
+        reach: Reach,
     ) -> Result<(), ActionError> {
         match self.child(key) {
             None | Some(Value::Undefined | Value::Null) => {
-                self.create(context, Value::String(key.to_string()), Fresh::Table);
+                let segment = Value::String(key.to_string());
+                if Reach::Descend == reach {
+                    // A header's prefix: the one kind of table a later
+                    // header may define.
+                    set_implicit(context, self.trie, &segment, true);
+                }
+                self.create(context, segment, Fresh::Table);
                 Ok(())
             }
             Some(Value::Array(_)) => {
-                if descend {
+                if Reach::Define != reach {
                     self.enter(context, key);
                     return Ok(());
                 }
@@ -518,8 +690,39 @@ impl Cursor {
                 // replaced the array and dropped the first.
                 Err(conflict(key, "it is already an array of tables"))
             }
-            // An existing TABLE passes straight through.
+            // An existing TABLE passes when walked through. A header may
+            // DEFINE it only if a header's prefix made it and no header has
+            // defined it yet: `[a]` after `[a.b]` is that one case, and
+            // `[a]` after `[a]`, after `a.b = 1` or after `a = {}` is a key
+            // defined twice. Every port used to let all of those through.
+            //
+            // A dotted key that walks through a table defines it, as it
+            // defines every table it creates, so the table stops being
+            // implicit and no header defines it afterwards. Only on the
+            // document's own cell, see [`ROOT_KEY`], which a dotted key
+            // walks only before the first header, when nothing is implicit
+            // yet, so no document reaches this today; it keeps the rule true
+            // without leaning on that. The document that showed the rule
+            // missing, `[x.a.b]`, `[x]` with `a.c = 1`, then `[x.a]`, was
+            // accepted here for another reason: the marks are kept by path,
+            // and the body's merge replaced the table at `x.a` under the
+            // mark `[x.a.b]` had left. `refs::body_conflict` refuses it at
+            // `a.c` now.
             Some(Value::Object(_) | Value::MapRef(_)) => {
+                let segment = Value::String(key.to_string());
+                match reach {
+                    Reach::Define => {
+                        if !set_implicit(context, self.trie, &segment, false) {
+                            return Err(conflict(key, "it is already defined"));
+                        }
+                    }
+                    Reach::Dive => {
+                        if is_root(context, self.cell) {
+                            set_implicit(context, self.trie, &segment, false);
+                        }
+                    }
+                    Reach::Descend => {}
+                }
                 self.enter(context, key);
                 Ok(())
             }
@@ -556,6 +759,7 @@ impl Cursor {
         };
         match last {
             Some((index, node)) => {
+                self.trie = trie_child(context, self.trie, &number(index));
                 self.path = extend(context, self.path, number(index));
                 self.here = Here::Node(node);
             }
@@ -645,6 +849,7 @@ impl Cursor {
             number(base),
             number(end),
             number(last),
+            number(self.trie),
         ]));
         match context.u.get_mut(HEADER_KEY) {
             Some(slot) => *slot = parked,
@@ -663,7 +868,17 @@ fn take_parked(context: &mut Context) -> Option<Cursor> {
     };
     let mut parts = Arc::try_unwrap(parts).unwrap_or_else(|shared| (*shared).clone());
     let field = |index: usize| count(parts.get(index));
-    let (Some(high), Some(low), Some(id), Some(len), Some(here), Some(base), Some(end), Some(last)) = (
+    let (
+        Some(high),
+        Some(low),
+        Some(id),
+        Some(len),
+        Some(here),
+        Some(base),
+        Some(end),
+        Some(last),
+        Some(trie),
+    ) = (
         field(0),
         field(1),
         field(2),
@@ -672,7 +887,9 @@ fn take_parked(context: &mut Context) -> Option<Cursor> {
         field(6),
         field(7),
         field(8),
-    ) else {
+        field(9),
+    )
+    else {
         return None;
     };
     let node = std::mem::replace(parts.get_mut(5)?, Value::Undefined);
@@ -686,6 +903,7 @@ fn take_parked(context: &mut Context) -> Option<Cursor> {
         } else {
             Path { id, len }
         },
+        trie,
         here: match here {
             0 => Here::Node(node),
             1 | 2 => Here::Fresh(fresh(here)),
