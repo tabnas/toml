@@ -135,7 +135,19 @@ two ports, handed `r.prev.node` by reference, take milliseconds
   paths, flat in one map in the context's `u` bag (`toml_implicit`), whose
   entry for a child is keyed by the parent's number and the segment and
   holds the child's number and the implicit flag. One hash lookup per
-  segment, whatever the depth.
+  segment, whatever the depth. A table body and an inline table are cells
+  of their own, and their paths number from the same root node, so a
+  body's own `a` shares its trie node with the document's `a`. Only a
+  cursor on the document's own cell may change a mark: `@toml-bo` records
+  that cell (`toml_root`), and a dotted key that walks through a table
+  clears the table's mark only there. A clear without that check refuses
+  valid TOML: `[a.b]`, then `[c]` with `a.x = 1` and `a.y = 2`, then `[a]`,
+  because the second dotted key clears the document's mark on `a`;
+  `key_conflicts_are_diagnosed` holds that document legal, and fails when
+  the check is taken out. Marks are kept by path, so a table the merge of
+  a body replaced kept the old table's mark; the merge only adds keys now,
+  because `body_conflict` in `refs.rs` refuses a key at the top of a body
+  that the table already holds.
 
 The document is the same, table for table and key for key, because each
 table is created in the same container, under the same key, in the same

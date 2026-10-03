@@ -70,6 +70,15 @@ const HEADER_KEY: &str = "toml_header";
 /// on the value a reader gets back.
 const IMPLICIT_KEY: &str = "toml_implicit";
 
+/// Where the parse keeps the address of the document's own cell, in the
+/// context's `u` bag. A header's prefix marks tables in that tree only. A
+/// table body or an inline table is a cell of its own, whose paths are
+/// numbered from the same root node of the trie, so a cursor on any other
+/// cell must leave the marks alone: `[a.b]`, then `[c]` with `a.x = 1` and
+/// `a.y = 2`, walks `c`'s own `a`, and the implicit `a` at the top of the
+/// document has the same trie node.
+const ROOT_KEY: &str = "toml_root";
+
 /// A table path: the first `len` segments of buffer `id` in the parse's
 /// path registry. A segment is a key (a string) into a table, or a
 /// position (a number) into an array of tables.
@@ -295,9 +304,9 @@ pub(crate) fn merge_into(context: &mut Context, cell: &Cell, path: Path, source:
 /// being defined is `[x]` trying to redefine `[[x]]`: invalid TOML. A table
 /// a header walks through and finds missing is created implicitly, and TOML
 /// lets one later header define it (`[a.b]` then `[a]`); a table a header
-/// has DEFINED, a dotted key has created or an inline table has made may
-/// not be defined by a header again (`[a]` twice, `a.b = 1` then `[a]`,
-/// `a = {}` then `[a]`).
+/// has DEFINED, a dotted key has created or walked through, or an inline
+/// table has made may not be defined by a header again (`[a]` twice,
+/// `a.b = 1` then `[a]`, `a = {}` then `[a]`).
 ///
 /// The grammar already separates the positions: `#DOT`-terminated segments
 /// of a header are intermediate, `#CS`-terminated ones are final, and a
@@ -397,6 +406,31 @@ fn trie_entry(context: &mut Context, parent: usize, segment: &Value) -> (usize, 
 /// The trie node for `segment` under `parent`.
 fn trie_child(context: &mut Context, parent: usize, segment: &Value) -> usize {
     trie_entry(context, parent, segment).0
+}
+
+/// Record `cell` as the document's own cell (see [`ROOT_KEY`]). Kept as two
+/// halves, as a parked cursor keeps its cell, so the address survives the
+/// trip through an `f64`.
+pub(crate) fn set_root(context: &mut Context, cell: &Cell) {
+    let id = cell_id(cell) as u64;
+    let halves = Value::Array(Arc::new(vec![
+        number((id >> 32) as usize),
+        number((id & 0xffff_ffff) as usize),
+    ]));
+    context.u.insert(ROOT_KEY.to_string(), halves);
+}
+
+/// Whether `cell`, an address as [`cell_id`] gives it, is the document's
+/// own cell.
+fn is_root(context: &Context, cell: usize) -> bool {
+    let Some(Value::Array(halves)) = context.u.get(ROOT_KEY) else {
+        return false;
+    };
+    match (count(halves.first()), count(halves.get(1))) {
+        #[allow(clippy::cast_possible_truncation)]
+        (Some(high), Some(low)) => cell == (((high as u64) << 32) | low as u64) as usize,
+        _ => false,
+    }
 }
 
 /// Record whether the table at `segment` under trie node `parent` is
@@ -661,11 +695,33 @@ impl Cursor {
             // defined it yet: `[a]` after `[a.b]` is that one case, and
             // `[a]` after `[a]`, after `a.b = 1` or after `a = {}` is a key
             // defined twice. Every port used to let all of those through.
+            //
+            // A dotted key that walks through a table defines it, as it
+            // defines every table it creates, so the table stops being
+            // implicit and no header defines it afterwards. Only on the
+            // document's own cell, see [`ROOT_KEY`], which a dotted key
+            // walks only before the first header, when nothing is implicit
+            // yet, so no document reaches this today; it keeps the rule true
+            // without leaning on that. The document that showed the rule
+            // missing, `[x.a.b]`, `[x]` with `a.c = 1`, then `[x.a]`, was
+            // accepted here for another reason: the marks are kept by path,
+            // and the body's merge replaced the table at `x.a` under the
+            // mark `[x.a.b]` had left. `refs::body_conflict` refuses it at
+            // `a.c` now.
             Some(Value::Object(_) | Value::MapRef(_)) => {
-                if Reach::Define == reach
-                    && !set_implicit(context, self.trie, &Value::String(key.to_string()), false)
-                {
-                    return Err(conflict(key, "it is already defined"));
+                let segment = Value::String(key.to_string());
+                match reach {
+                    Reach::Define => {
+                        if !set_implicit(context, self.trie, &segment, false) {
+                            return Err(conflict(key, "it is already defined"));
+                        }
+                    }
+                    Reach::Dive => {
+                        if is_root(context, self.cell) {
+                            set_implicit(context, self.trie, &segment, false);
+                        }
+                    }
+                    Reach::Descend => {}
                 }
                 self.enter(context, key);
                 Ok(())

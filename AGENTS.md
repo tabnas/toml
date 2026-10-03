@@ -758,7 +758,7 @@ word, so a document rejected by two ports is rejected in the same words:
 
 | code | raised by | raised when |
 |---|---|---|
-| `toml_key_conflict` | TS, Go, Rust | a key TOML does not allow to be redefined: a key given a second value (`a = 1` then `a = 2`, in a table body or an inline table, through a plain or a dotted key), a value used again as a table or table-array header, an array of tables redefined as a table, a header written twice, or a header for a table a dotted key or an inline table had already defined (`a.b = 1` then `[a]`). A header may define the table its own prefix created, once: `[a.b]` then `[a]`. |
+| `toml_key_conflict` | TS, Go, Rust | a key TOML does not allow to be redefined: a key given a second value (`a = 1` then `a = 2`, in a table body or an inline table, through a plain or a dotted key), a key a table already holds from an earlier header given a value by that table's body (`[a.b]`, then `[a]` with `b = 2` or `b.c = 2`), a value used again as a table or table-array header, an array of tables redefined as a table, a header written twice, or a header for a table a dotted key or an inline table had already defined (`a.b = 1` then `[a]`). A header may define the table its own prefix created, once: `[a.b]` then `[a]`. |
 | `invalid_datetime` | TS, Go, Rust | a value whose SHAPE is a date or time but whose components cannot denote a real instant. |
 
 Each port raises `toml_key_conflict` in the way its engine lets a grammar
@@ -772,19 +772,32 @@ nineteen-document gap `test/conformance.tsv` records closing. The check
 itself lives in `tableAt` and `arrayAt`, one per port, for a header's
 segments and a dotted key's leading segments, and in the before-close
 actions of `pair` and `dive` (`@pair-bc/prepend`, `@dive-bc`) for a key
-about to be given a value it already has; a header may define an existing
-table only when a header's prefix created it and no header has defined it
-yet, which each port keeps as a per-parse set in the context's `u` bag
-(`toml_implicit`). The shared rows are `test/spec/key-conflict.tsv`. One
-difference remains and is in the register: TypeScript reports a header's
-conflict at `1:1`, because it raises on `ctx.t0`, which its engine has
-emptied by the time an action runs, while Go and Rust point at the key
-being redefined; a pair's conflict is raised on the key's own token in
-every port. Two shapes in this family stay accepted, and are listed in
-`test/conformance.tsv`: a key the table already holds from an earlier
-header (`[a.b]` `c = 1` then `[a]` `b = 2`), because a table's body is
-parsed into a map of its own and merged at its end, and a header or dotted
-key reaching into an inline table (`a = {}` then `[a.b]`).
+about to be given a value it already has.
+
+"Already has" covers two maps, because a table's body is parsed into a map
+of its own and merged into the table when the body ends (`@table-bc`): the
+body's map, and the keys the table held before its body began, from an
+earlier header (`[a.b]` `c = 1`, then `[a]` with `b = 2`). A key at the top
+of a body, a pair or a dotted key's first segment, is checked against both
+(`@pair-bc/prepend` and `@dive-key-dot`, through `bodyTable` in TypeScript
+and Go and `body_conflict` in Rust), so the merge only ever adds keys.
+Until 2026-10-03 the merge replaced such a key and lost what it held.
+
+A header may define an existing table only when a header's prefix created
+it and no header has defined it yet; a dotted key that walks through such
+a table defines it too. Each port keeps those tables as a per-parse set in
+the context's `u` bag (`toml_implicit`); Rust's is a trie over paths, and
+only a cursor on the document's own cell changes a mark in it
+(`rs/AGENTS.md`). The shared rows are `test/spec/key-conflict.tsv`.
+
+Every port raises the conflict on the key being redefined, so the three
+agree on the position as well as the code. TypeScript raised a header's
+conflict at `1:1` until 2026-10-03, on `ctx.t0`, which its engine has
+emptied by the time an alternate's action runs; it raises on `r.o0` now,
+and the register row that recorded the difference is gone. One shape in
+this family stays accepted, and is listed in `test/conformance.tsv`: a
+header or dotted key reaching into an inline table or an array written as
+a value (`a = {}` then `[a.b]`, `a = [1]` then `a.b = 2`).
 
 Everything else it *raises* is inherited from the engine and from
 `@tabnas/jsonic`: `unexpected`, and the string matcher's `unprintable`,

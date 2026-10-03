@@ -197,7 +197,8 @@ const node = () => Object.create(null)
 // The last table of an array-of-tables, or a DIAGNOSED refusal to append to
 // something that is not an array. `[[a]]` after `a = 1` raised
 // "r.prev.node.push is not a function" — the same crash class as tableAt's,
-// reached through .push instead of an assignment.
+// reached through .push instead of an assignment. Raised on the segment's
+// own token, `r.o0`, as tableAt's refusals are.
 function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
   const existing = container[key]
   if (Array.isArray(existing)) return existing
@@ -206,7 +207,7 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
   throw new JsonicError(
     'toml_key_conflict',
     { key, why: `it already has the value ${JSON.stringify(existing)}` },
-    ctx.t0, r, ctx)
+    r.o0, r, ctx)
 }
 
 // What a segment asks of the table under its key.
@@ -219,8 +220,9 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
 // `[x]` trying to redefine `[[x]]` — invalid TOML. A table a header walks
 // through and finds missing is created implicitly, and TOML lets one later
 // header define it (`[a.b]` then `[a]`); a table a header has DEFINED, a
-// dotted key has created or an inline table has made may not be defined by
-// a header again (`[a]` twice, `a.b = 1` then `[a]`, `a = {}` then `[a]`).
+// dotted key has created or walked through, or an inline table has made may
+// not be defined by a header again (`[a]` twice, `a.b = 1` then `[a]`,
+// `a = {}` then `[a]`).
 //
 // The grammar already separates the positions: `#DOT`-terminated segments of
 // a header are intermediate, `#CS`-terminated ones are final, and a dotted
@@ -268,6 +270,12 @@ function redefines(container: any, key: string, r: any, ctx: any): void {
 // rejection is a real parse error ... anything else is an internal crash"),
 // and that turning a crash into a diagnosis is the point: it raises
 // INVALID_DIAGNOSED_FLOOR.
+//
+// Every refusal is raised on the segment's own token, `r.o0`: every caller
+// is the alternate action of the rule that matched the segment, so the key
+// being redefined is in hand, and Go and Rust point at it too. These used to
+// be raised on `ctx.t0`, which the engine has emptied by the time an
+// alternate's action runs, so every header conflict read `1:1`.
 function tableAt(
   container: any, key: string, r: any, ctx: any, how: string
 ): any {
@@ -293,7 +301,7 @@ function tableAt(
     throw new JsonicError(
       'toml_key_conflict',
       { key, why: 'it is already an array of tables' },
-      ctx.t0, r, ctx)
+      r.o0, r, ctx)
   }
 
   // An existing TABLE passes when walked through. Object.create(null) has no
@@ -302,7 +310,19 @@ function tableAt(
   // and no header has defined it yet: `[a]` after `[a.b]` is that one case,
   // and `[a]` after `[a]`, after `a.b = 1` or after `a = {}` is a key defined
   // twice. Every port used to let all of those through.
+  //
+  // A dotted key that walks through a table defines it, as it defines every
+  // table it creates, so the table leaves the implicit set and no header
+  // defines it afterwards. Without that, `[x.a.b]`, `[x]` with `a.c = 1`, and
+  // then `[x.a]` would consume a mark the dotted key had made stale. No
+  // document reaches this today: a dotted key walks the map its own table
+  // body or inline table is parsed into, which holds no header's tables, and
+  // the body checks against its table (`bodyTable`) refuse that document at
+  // `a.c`. It keeps this rule true without leaning on that.
   if ('object' === typeof existing) {
+    if (DIVE === how) {
+      implicit(ctx).delete(existing)
+    }
     if (DEFINE !== how || implicit(ctx).delete(existing)) {
       return existing
     }
@@ -310,7 +330,7 @@ function tableAt(
     throw new JsonicError(
       'toml_key_conflict',
       { key, why: 'it is already defined' },
-      ctx.t0, r, ctx)
+      r.o0, r, ctx)
   }
 
   throw new JsonicError(
@@ -319,7 +339,26 @@ function tableAt(
       key,
       why: `it already has the value ${JSON.stringify(existing)}`,
     },
-    ctx.t0, r, ctx)
+    r.o0, r, ctx)
+}
+
+// The table a table body is merged into, when `r` writes the TOP level of
+// that body: a pair in the body's map, or the first segment of a dotted key
+// there. A table's body is parsed into a map of its own (`@map-bo`) and
+// merged into the table when the body ends (`@table-bc`), so a key the table
+// already holds from an earlier header is not in the map the body's own
+// checks read: `[a.b]` `c = 1` then `[a]` `b = 2` replaced `b`, losing `c`,
+// and `[[a.b]]` then `[a]` `b.y = 2` replaced the array. Nothing writes to the
+// table while its body is parsed, so checking a key against it here, where
+// the key's token is in hand, is checking it at the merge, and the refusal
+// points at the key, as every pair conflict does. Undefined for a pair or a
+// dotted key in an inline table, whose map is the value itself, and for a
+// later segment of a dotted key, which writes below the top level.
+function bodyTable(r: any): any {
+  const map = 'pair' === r.parent?.name ? r.parent.parent : r.parent
+  return 'map' === map?.name && 'table' === map.parent?.name
+    ? map.parent.node
+    : undefined
 }
 
 
@@ -510,6 +549,9 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       r.node = r.parent.node
     },
 
+    // Merge the body into the table. Every key of the body was checked
+    // against the table when the body defined it (`bodyTable`), so this
+    // only ever adds keys and never replaces one.
     '@table-bc': (r: Rule) => {
       if (!r.u.top_dive) {
         Object.assign(r.node, r.child.node)
@@ -529,10 +571,15 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     },
 
     // Before the base grammar's own before-close action writes the pair:
-    // a key already in the table is a conflict, not a merge.
+    // a key already in the table is a conflict, not a merge, whether the
+    // body has it or the table did before the body began.
     '@pair-bc/prepend': (r: Rule, ctx: any) => {
       if (r.u.pair) {
         redefines(r.node, r.u.key, r, ctx)
+        const table = bodyTable(r)
+        if (table) {
+          redefines(table, r.u.key, r, ctx)
+        }
       }
     },
 
@@ -607,7 +654,14 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
       r.u.key = r.o0.val
     },
 
+    // A dotted key's leading segment. At the top of a table body, the key
+    // may not be one the table already holds: `[a.b.c]` `z = 9` then `[a]`
+    // `b.c.t = 1` would replace `b` at the merge, losing `z`.
     '@dive-key-dot': (r: any, ctx: any) => {
+      const table = bodyTable(r)
+      if (table) {
+        redefines(table, r.o0.val, r, ctx)
+      }
       r.node = tableAt(r.parent.node, r.o0.val, r, ctx, DIVE)
     },
 

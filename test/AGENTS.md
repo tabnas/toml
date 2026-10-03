@@ -57,7 +57,7 @@ audit found 29 recorded claims contradicted by execution.
 **Position is opt-in.** A cell with no `@row:col` is satisfied by any
 position; one that has it is compared on both.
 
-The register holds two classes of row today.
+The register holds three classes of row today.
 
 The first two rows are the **astral column unit**, and they are
 *permanent*: TypeScript counts UTF-16 code units, so an astral character
@@ -68,17 +68,17 @@ here and three ports. Forced by the scan unit and recorded in
 `parser/DIVERGENCE.md`. Do not delete them on a sweep — nothing is going to
 close them.
 
-The last three rows are a **bad token reached in lookahead**, and they are
-open. When an alternate needs two tokens and the second is the lexer's bad
-token, TypeScript and Go raise that token's own code (`unterminated_string`,
-`unprintable`) and Rust answers `unexpected` at the first token. The Rust
-engine builds its "no alternate matched" error from the first lookahead
-token alone, so a bad token in a later slot loses its code; the canonical
-engine remembers it and throws it once every alternate has declined. The
-repair is an engine one, in `tabnas/parser`'s Rust port, so the rows stay
-until it lands. Six documents of the BurntSushi corpus sit in this class,
-all of them rejected by every port, which is why the `rust` row of
-`conformance.tsv` still reproduces the `ts` counts.
+The next row is a **bad token reached in lookahead**, and it is open. When
+an alternate needs two tokens and the second is the lexer's bad token, the
+Rust engine used to build its "no alternate matched" error from the first
+lookahead token alone, so a bad token in a later slot lost its code.
+tabnas/parser#274 repaired that in the engine, which closed the two rows
+that pinned a code; what remains is one position, a run of apostrophes
+that TypeScript and Go report at `1:18` and Rust at `1:22`, with the same
+code. The repair, if one is wanted, is the engine's as well. Six documents
+of the BurntSushi corpus sat in this class, all of them rejected by every
+port either way, which is why the `rust` row of `conformance.tsv` still
+reproduces the `ts` counts.
 
 One more row records a **lax hexadecimal escape**: `a = "\\u12g4"` reads
 as U+0012 in TypeScript and Rust, because the canonical scan accepts every
@@ -89,13 +89,15 @@ invalid TOML -- the format requires exactly four hexadecimal digits --
 so Go is the only one of the three that is right, and the two that move
 are TypeScript and Rust.
 
-The last row is the **position of a key conflict**. All three ports
-refuse a redefined key with `toml_key_conflict` -- the shared rows are
-`spec/key-conflict.tsv` -- and Go and Rust point at the key being
-redefined, while TypeScript answers `1:1`, because it raises on `ctx.t0`
-after its engine has emptied that slot for the action. **TypeScript is the
-repair target**: the repair is in `ts/src/toml.ts` (raise on the matched
-key token) or in the engine, and the row goes when it lands.
+A fourth class, the **position of a key conflict**, closed on 2026-10-03.
+TypeScript answered `1:1` for a header's conflict, raising on `ctx.t0`
+after its engine had emptied that slot for the action, where Go and Rust
+pointed at the key being redefined. `ts/src/toml.ts` raises on the
+matched key token, `r.o0`, now, so every port points at the key, and the
+row was deleted when its TypeScript cell went red. The positions are held
+by each port's own key-conflict test instead: `key-conflict-is-diagnosed`
+in `ts/test/toml.test.ts`, `go/key_conflict_test.go` and
+`key_conflicts_are_diagnosed` in `rs/tests/toml_test.rs`.
 
 One difference that belongs in the register cannot be written into it. A
 lone surrogate (`a = "\\ud801"`) survives in a JavaScript string and folds

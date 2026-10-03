@@ -407,13 +407,20 @@ describe('toml', () => {
     const toml = new Tabnas().use(jsonic).use(Toml)
     const norm = (v: any) => JSON.parse(JSON.stringify(v))
 
-    // Each of these crashed with an uncaught TypeError before the repair.
-    const conflicts = [
-      'a = {b = 1, b.c = 2}',
-      'a = {b = "s", b.c = 2}',
-      'a = 1\n[a.b]\nc = 2',
-      'a = 1\n[[a]]\nb = 2',
-      '[a]\nb = 1\n[[a.b]]\nc = 2',
+    // Each refusal points at the key being redefined, row:col, as the Go
+    // and Rust ports' do (go/key_conflict_test.go, rs/tests/toml_test.rs
+    // assert the same positions). A header's conflict read 1:1 here until
+    // 2026-10-03: it was raised on `ctx.t0`, which the engine has emptied
+    // by the time an alternate's action runs.
+    //
+    // Each of the first five crashed with an uncaught TypeError before the
+    // repair.
+    const conflicts: [string, string][] = [
+      ['a = {b = 1, b.c = 2}', '1:13'],
+      ['a = {b = "s", b.c = 2}', '1:15'],
+      ['a = 1\n[a.b]\nc = 2', '2:2'],
+      ['a = 1\n[[a]]\nb = 2', '2:3'],
+      ['[a]\nb = 1\n[[a.b]]\nc = 2', '3:5'],
 
       // Redefining an array-of-tables as a table. These did NOT crash: both
       // ports accepted them and both silently DESTROYED data, in opposite
@@ -422,9 +429,9 @@ describe('toml', () => {
       // dropped the first. Silent data loss on an invalid document is worse
       // than the TypeError above, because nothing at all reports it.
       // corpus: array/tables-02, table/duplicate-key-07.
-      '[[fruit]]\nname = "apple"\n[[fruit.variety]]\n' +
-      'name = "red delicious"\n[fruit.variety]\nname = "granny smith"',
-      '[[x]]\na = 1\n[x]\nb = 2',
+      ['[[fruit]]\nname = "apple"\n[[fruit.variety]]\n' +
+        'name = "red delicious"\n[fruit.variety]\nname = "granny smith"', '5:8'],
+      ['[[x]]\na = 1\n[x]\nb = 2', '3:2'],
 
       // The four shapes every port accepted until 2026-10-03: a key given a
       // second value (the base grammar's rule, last wins and tables merged,
@@ -432,15 +439,25 @@ describe('toml', () => {
       // table, a header written twice, and a header for a table a dotted
       // key had defined. None of these crashed or lost data; they built
       // a value TOML says does not exist.
-      'a = 1\na = 2',
-      'a.b = 1\na.b = 2',
-      'a = {b = 1, b = 2}',
-      '[a]\n[a]',
-      'a.b = 1\n[a]\nc = 2',
-      '[a]\nb.c = 1\n[a.b]\nd = 2',
-      'a = {}\n[a]',
+      ['a = 1\na = 2', '2:1'],
+      ['a.b = 1\na.b = 2', '2:3'],
+      ['a = {b = 1, b = 2}', '1:13'],
+      ['[a]\n[a]', '2:2'],
+      ['a.b = 1\n[a]\nc = 2', '2:2'],
+      ['[a]\nb.c = 1\n[a.b]\nd = 2', '3:4'],
+      ['a = {}\n[a]', '2:2'],
+
+      // A key the table already holds from an earlier header. The body is
+      // parsed into a map of its own and merged into the table at its end,
+      // and the merge used to replace the key: `c` lost, the array lost.
+      // The last is a dotted key walking `x.a`, which `[x.a.b]`'s prefix
+      // created and a later `[x.a]` used to define.
+      ['[a.b]\nc = 1\n[a]\nb = 2', '4:1'],
+      ['[a.b.c]\nz = 9\n[a]\nb.c.t = 1', '4:1'],
+      ['[[a.b]]\n[a]\nb.y = 2', '3:1'],
+      ['[x.a.b]\n[x]\na.c = 1\n[x.a]', '3:1'],
     ]
-    for (const src of conflicts) {
+    for (const [src, at] of conflicts) {
       let caught: any = null
       try {
         toml.parse(src)
@@ -454,6 +471,8 @@ describe('toml', () => {
         `${JSON.stringify(src)}: rejected as ` +
         `${caught.code ?? caught.constructor.name} — a rejection carrying no ` +
         'code is the uncaught crash this replaced, not a diagnosis')
+      equal(`${caught.lineNumber}:${caught.columnNumber}`, at,
+        `${JSON.stringify(src)}: points away from the key being redefined`)
     }
 
     // Controls. Descending into an existing TABLE, or into the last element
@@ -461,7 +480,9 @@ describe('toml', () => {
     // conflict: four valid corpus documents do exactly this, and a first cut
     // of the check rejected all four. A header may define the table its own
     // prefix created, once, and a new sub-table under a table a dotted key
-    // made.
+    // made; its body may add a key the table does not hold yet; and a
+    // body's own table may share its name with a header's implicit table
+    // elsewhere.
     const allowed: [string, any][] = [
       ['a = {b = 1, c = 2}', { a: { b: 1, c: 2 } }],
       ['a = {b.c = 1, b.d = 2}', { a: { b: { c: 1, d: 2 } } }],
@@ -469,6 +490,9 @@ describe('toml', () => {
       ['[a.b]\nc = 1\n[a]\nd = 2', { a: { b: { c: 1 }, d: 2 } }],
       ['[[a.b]]\n[a]', { a: { b: [{}] } }],
       ['[a]\nb.c = 1\n[a.b.d]\ne = 2', { a: { b: { c: 1, d: { e: 2 } } } }],
+      ['[a.b.c]\n[a]\nd = 1', { a: { b: { c: {} }, d: 1 } }],
+      ['[a.b]\n[c]\na.x = 1\na.y = 2\n[a]',
+        { a: { b: {} }, c: { a: { x: 1, y: 2 } } }],
     ]
     for (const [src, want] of allowed) {
       equal(norm(toml.parse(src)), want,

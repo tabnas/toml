@@ -23,9 +23,10 @@ import (
 // array of tables redefined as a table was replaced by the second table,
 // dropping the first. Nothing reported either. The nineteen documents of
 // the BurntSushi corpus in this class are what moved the `go` row of
-// test/conformance.tsv in 2026-10-02; the four shapes at the end of the
+// test/conformance.tsv in 2026-10-02; the four shapes near the end of the
 // table, which every port accepted until 2026-10-03, are the thirty-one
-// that moved it again.
+// that moved it again, and a key a table already holds from an earlier
+// header, the last group, is seven more.
 //
 // The code is asserted, not merely the failure: the engine turns an
 // arbitrary panic inside an action into `internal`, and an `internal`
@@ -90,6 +91,21 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 		{"a.b = 1\n[a]\nc = 2", "cannot define a, it is already defined", "2:2"},
 		{"[a]\nb.c = 1\n[a.b]\nd = 2", "cannot define b, it is already defined", "3:4"},
 		{"a = {}\n[a]", "cannot define a, it is already defined", "2:2"},
+
+		// A key the table already holds from an earlier header. A table's
+		// body is parsed into a map of its own and merged into the table
+		// at its end, and the merge used to replace the key; the body's
+		// keys are now checked against the table where the body defines
+		// them, so the refusal points at the key. The last row is a dotted
+		// key walking `x.a`, the table `[x.a.b]`'s prefix created, which
+		// a later `[x.a]` used to define.
+		{"[a.b]\nc = 1\n[a]\nb = 2", `cannot define b, it already has the value {"c":1}`, "4:1"},
+		{"[a.b]\nc = 1\n[a]\nb.d = 2", `cannot define b, it already has the value {"c":1}`, "4:1"},
+		{"[a.b.c]\nz = 9\n[a]\nb.c.t = 1", `cannot define b, it already has the value {"c":{"z":9}}`, "4:1"},
+		{"[a.b.c]\n[a]\n\"b\" = 1", `cannot define b, it already has the value {"c":{}}`, "3:4"},
+		{"[[a.b]]\n[a]\nb = 2", "cannot define b, it already has the value [{}]", "3:1"},
+		{"[[a.b]]\n[a]\nb.y = 2", "cannot define b, it already has the value [{}]", "3:1"},
+		{"[x.a.b]\n[x]\na.c = 1\n[x.a]", `cannot define a, it already has the value {"b":{}}`, "3:1"},
 	}
 
 	for _, c := range cases {
@@ -116,10 +132,10 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 		if !strings.Contains(te.Hint, "TOML does not allow a key to be redefined") {
 			t.Errorf("%q: hint %q is not the toml_key_conflict hint", c.src, te.Hint)
 		}
-		// The error points at the key being redefined, as the Rust port's
-		// does. The TypeScript port answers 1:1: it raises on `ctx.t0`,
-		// which its engine has emptied by the time an action runs, and
-		// that position is the row the register records for this class.
+		// The error points at the key being redefined, as the TypeScript
+		// and Rust ports' do. TypeScript answered 1:1 for every header
+		// conflict until 2026-10-03, raising on a token its engine had
+		// emptied, and the register carried that row until it agreed.
 		if at := fmt.Sprintf("%d:%d", te.Row, te.Col); at != c.at {
 			t.Errorf("%q: at %s, want %s (the key being redefined)", c.src, at, c.at)
 		}
@@ -149,6 +165,13 @@ func TestImplicitTablesStayLegal(t *testing.T) {
 		// Through an array of tables to its last element.
 		{"[[x]]\ny = 1\n[x.z]\nw = 2", `{"x":[{"y":1,"z":{"w":2}}]}`},
 		{"[[a]]\n[[a]]\n[a.b]\nc = 1", `{"a":[{},{"b":{"c":1}}]}`},
+		// A later header's body adds a key its table does not hold yet; a
+		// body's own table may share its name with a header's implicit
+		// table elsewhere; every element of an array of tables has a body
+		// of its own.
+		{"[a.b.c]\n[a]\nd = 1", `{"a":{"b":{"c":{}},"d":1}}`},
+		{"[a.b]\n[c]\na.x = 1\na.y = 2\n[a]", `{"a":{"b":{}},"c":{"a":{"x":1,"y":2}}}`},
+		{"[[a]]\nb.c = 1\n[[a]]\nb.c = 2", `{"a":[{"b":{"c":1}},{"b":{"c":2}}]}`},
 	}
 	for _, c := range cases {
 		v, err := Parse(c.src)

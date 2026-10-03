@@ -46,6 +46,38 @@ runtime	total	rejected	diagnosed	crashes
 # ../test/divergent.tsv, where Go is the repair TARGET and the two that
 # move are TypeScript and Rust, so this gap closes from the ts side.
 #
+# WHY EVERY ROW WENT UP AGAIN, ts 309 -> 316, go 311 -> 318, rust 309 ->
+# 316, 2026-10-03
+#
+# The seven are a key a table already holds from an EARLIER header. A
+# table's body is parsed into a map of its own and merged into the table
+# when the body ends, so the checks below, which read the body's map, never
+# saw the table's own keys, and the merge replaced them: `[a.b]` `c = 1`
+# then `[a]` `b = 2` gave {"a":{"b":2}}, losing `c`; `[a.b.c]` `z = 9` then
+# `[a]` `b.c.t = 1` lost `z`; `[[a.b]]` then `[a]` `b.y = 2` replaced the
+# array. Every port now checks a key at the top of a table body against the
+# table as well, where the body defines it (bodyTable in ts/src/toml.ts and
+# go/refs.go, body_conflict in rs/src/refs.rs), and refuses it with
+# toml_key_conflict at the key. Obtained by diffing the accepted sets before
+# and after, in each port; the same seven in all three, and no other
+# document changed its answer:
+#
+#   array/extend-defined-aot  inline-table/overwrite-09
+#   table/append-with-dotted-keys-01  table/append-with-dotted-keys-02
+#   table/append-with-dotted-keys-03  table/append-with-dotted-keys-08
+#   table/overwrite-array-in-parent
+#
+# The valid half does not move: 268 of 268 in every port, before and after.
+#
+# What stays accepted in this family, and why: an inline table or an array
+# written as a value is not yet closed to a later header or dotted key
+# reaching INTO it (`a = {}` then `[a.b]`, `a = [1]` then `a.b = 2`;
+# inline-table/duplicate-key-03, overwrite-02, overwrite-07, overwrite-08,
+# spec-1.1.0/common-49-0, array/extending-table, array/tables-01,
+# table/duplicate-key-10). inline-table/overwrite-01 is refused, but with
+# `unexpected`: a plain key after a dotted key at the top of a document or
+# a body is a grammar limit of its own (tabnas/toml#94).
+#
 # WHY EVERY ROW WENT UP, ts 278 -> 309, go 280 -> 311, rust 278 -> 309,
 # 2026-10-03
 #
@@ -77,15 +109,10 @@ runtime	total	rejected	diagnosed	crashes
 #
 # The valid half does not move: 268 of 268 in every port, before and after.
 #
-# What stays accepted in this family, and why: a table's body is parsed
-# into a map of its own and merged into the table when the body ends, so a
-# key the table already holds from an EARLIER header is still overwritten
-# at the merge (`[a.b]` `c = 1` then `[a]` `b = 2`;
-# table/overwrite-array-in-parent; inline-table/overwrite-01 and -09 are
-# the same split between a root-level dotted key and the root's map), and
-# an inline table is not yet closed to a later header or dotted key
-# reaching INTO it (`a = {}` then `[a.b]`; inline-table/duplicate-key-03,
-# overwrite-02, overwrite-08). Those are not among the four shapes.
+# What that change left accepted in this family: a key the table already
+# held from an EARLIER header, overwritten when the table's body was merged
+# (refused since, above), and an inline table not yet closed to a later
+# header or dotted key reaching INTO it. Neither was among the four shapes.
 #
 # WHY go WENT UP, 261 -> 280, 2026-10-02
 #
@@ -153,7 +180,7 @@ runtime	total	rejected	diagnosed	crashes
 #
 # THE rust ROW REPRODUCES THE ts ROW, WHICH IS THE POINT
 #
-# The Rust port measures 309/309/0, the same three numbers as TypeScript, on
+# The Rust port measures 316/316/0, the same three numbers as TypeScript, on
 # the same corpus. It diagnoses the key-conflict class as TypeScript does,
 # and reads the `\u12g4` escape laxly as TypeScript does, so it sits on the
 # ts side of the two-document gap above.
@@ -180,8 +207,15 @@ runtime	total	rejected	diagnosed	crashes
 # refused, against the sibling checkouts at main, wired the same way:
 # parser e0a5e3f, jsonic fc0edf0, json 7e893b8, support 67ba2c9, debug
 # 0bdcc3e. ts 309/309/0, go 311/311/0, rust 309/309/0: the three rows
-# below. The published pins (parser v0.12.8, jsonic v0.7.2, json v0.5.11,
-# support v0.3.5; `GOWORK=off go test`) give go the same 311/311/0.
-ts	509	309	309	0
-go	509	311	311	0
-rust	509	309	309	0
+# below then. The published pins (parser v0.12.8, jsonic v0.7.2, json
+# v0.5.11, support v0.3.5; `GOWORK=off go test`) gave go the same 311/311/0.
+#
+# RE-MEASURED 2026-10-03 AGAIN, after a key a table already holds from an
+# earlier header was refused, against the same sibling checkouts wired the
+# same way (parser e0a5e3f, jsonic fc0edf0, json 7e893b8, support 67ba2c9,
+# debug 0bdcc3e): ts 316/316/0, go 318/318/0, rust 316/316/0, the three
+# rows below. The published pins (`GOWORK=off go test`) give go the same
+# 318/318/0.
+ts	509	316	316	0
+go	509	318	318	0
+rust	509	316	316	0

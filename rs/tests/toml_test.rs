@@ -329,10 +329,12 @@ fn proto_named_keys_are_ordinary() {
 /// TOML forbids redefining a key. These are DIAGNOSED rejections, with a
 /// code and a position, rather than internal crashes, which is what the
 /// `diagnosed` column of ../test/conformance.tsv counts. The position is
-/// the key being redefined, as the Go port reports it; the last seven are
-/// the shapes every port accepted until 2026-10-03: a key given a second
-/// value, the same inside an inline table, a header written twice, and a
-/// header for a table a dotted key or an inline table had defined.
+/// the key being redefined, as the Go and TypeScript ports report it; the
+/// last eleven are shapes every port accepted until 2026-10-03: a key
+/// given a second value, the same inside an inline table, a header written
+/// twice, a header for a table a dotted key or an inline table had
+/// defined, and a key a table already holds from an earlier header, which
+/// the merge of the table's body used to replace.
 #[test]
 fn key_conflicts_are_diagnosed() {
     for (src, detail, at) in [
@@ -382,6 +384,29 @@ fn key_conflicts_are_diagnosed() {
             "cannot define a, it is already defined",
             "2:2",
         ),
+        (
+            "[a.b]\nc = 1\n[a]\nb = 2",
+            r#"cannot define b, it already has the value {"c":1}"#,
+            "4:1",
+        ),
+        (
+            "[a.b.c]\nz = 1\n[a]\nb.c.t = 2",
+            r#"cannot define b, it already has the value {"c":{"z":1}}"#,
+            "4:1",
+        ),
+        (
+            "[[a.b]]\n[a]\nb.y = 2",
+            "cannot define b, it already has the value [{}]",
+            "3:1",
+        ),
+        // A dotted key walking `x.a`, which `[x.a.b]`'s prefix created. The
+        // marks are kept by path here, and `[x.a]` used to read the one
+        // `[x.a.b]` left after the body had replaced the table at `x.a`.
+        (
+            "[x.a.b]\n[x]\na.c = 1\n[x.a]",
+            r#"cannot define a, it already has the value {"b":{}}"#,
+            "3:1",
+        ),
     ] {
         let error = parse(src)
             .err()
@@ -400,7 +425,11 @@ fn key_conflicts_are_diagnosed() {
 
     // A header may define the table its own prefix created, once, and a new
     // sub-table under a table a dotted key made; a dotted key extends the
-    // table it made. None of these is a conflict.
+    // table it made; a later header's body adds a key its table does not
+    // hold yet. None of these is a conflict. The last one is a body's own
+    // `a`, whose path from the body's cell has the same trie node as the
+    // implicit `a` at the top of the document: a dotted key walking it must
+    // not clear that mark, or `[a]` is refused.
     for (src, want) in [
         (
             "[a.b]\nc = 1\n[a]\nd = 2",
@@ -412,6 +441,11 @@ fn key_conflicts_are_diagnosed() {
             r#"{"a":{"b":{"c":1.0,"d":{"e":2.0}}}}"#,
         ),
         ("a.b = 1\na.c = 2", r#"{"a":{"b":1.0,"c":2.0}}"#),
+        ("[a.b.c]\n[a]\nd = 1", r#"{"a":{"b":{"c":{}},"d":1.0}}"#),
+        (
+            "[a.b]\n[c]\na.x = 1\na.y = 2\n[a]",
+            r#"{"a":{"b":{}},"c":{"a":{"x":1.0,"y":2.0}}}"#,
+        ),
     ] {
         let value = parse(src).unwrap_or_else(|error| panic!("{src:?} must still parse: {error}"));
         assert_eq!(want, value.to_json().to_string(), "{src:?}");

@@ -10,11 +10,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use tabnas::{ActionError, Context, Rule, Tabnas, Value};
+use tabnas::{ActionError, Context, Rule, RuleSnapshot, Tabnas, Value};
 
 use crate::node::{
-    existing_at, merge_into, new_map, path_of, redefined, set_path, snapshot_path, write_at, Cell,
-    Cursor, Path, Reach,
+    existing_at, merge_into, new_map, path_of, redefined, set_path, set_root, snapshot_path,
+    write_at, Cell, Cursor, Path, Reach,
 };
 use crate::strmatcher::make_toml_string_matcher;
 use crate::values::{isodate_val, localtime_val};
@@ -77,6 +77,44 @@ fn conclude(
     outcome
 }
 
+/// The table a table body is merged into, when `rule` writes the TOP level
+/// of that body: a pair in the body's map, or the first segment of a dotted
+/// key there; `None` anywhere else. A table's body is parsed into a map of
+/// its own (`@map-bo/append`) and merged into the table when the body ends
+/// (`@table-bc`), so a key the table already holds from an earlier header is
+/// not in the map the body's own checks read: `[a.b]` `c = 1` then `[a]`
+/// `b = 2` replaced `b`, losing `c`, and `[[a.b]]` then `[a]` `b.y = 2`
+/// replaced the array. A pair or a dotted key in an inline table has no such
+/// table: its map is the value itself.
+fn body_table(rule: &Rule) -> Option<Rc<RuleSnapshot>> {
+    let mut map = rule.parent_rule.clone()?;
+    if "pair" == map.name.as_ref() {
+        map = map.parent_rule.clone()?;
+    }
+    if "map" != map.name.as_ref() {
+        return None;
+    }
+    map.parent_rule
+        .clone()
+        .filter(|table| "table" == table.name.as_ref())
+}
+
+/// The refusal to give `key` a value at the top of a table body when the
+/// table already holds it (see [`body_table`]). Nothing writes to the table
+/// while its body is parsed, so checking here, where the key's token is in
+/// hand, is checking at the merge, and the engine points the refusal at the
+/// key, as it points every pair conflict.
+fn body_conflict(rule: &Rule, context: &mut Context, key: &str) -> Result<(), ActionError> {
+    let Some(table) = body_table(rule) else {
+        return Ok(());
+    };
+    let path = snapshot_path(Some(&table));
+    match existing_at(context, &table.node, path, key) {
+        Some(existing) => Err(redefined(key, &existing)),
+        None => Ok(()),
+    }
+}
+
 fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Undefined | Value::Null | Value::Bool(false)) => false,
@@ -110,9 +148,11 @@ fn register_matchers(parser: &mut Tabnas) {
 }
 
 fn register_state_actions(parser: &mut Tabnas) {
-    // The document root.
-    parser.state_action_ref("@toml-bo", |rule, _context| {
+    // The document root, whose cell is the one tree a header's prefix
+    // marks implicit (`node::ROOT_KEY`).
+    parser.state_action_ref("@toml-bo", |rule, context| {
         rule.node = Rc::new(RefCell::new(new_map()));
+        set_root(context, &rule.node);
         set_path(rule, Path::ROOT);
         Ok(())
     });
@@ -160,7 +200,9 @@ fn register_state_actions(parser: &mut Tabnas) {
     });
 
     // Fold the table's body into the table, and reset the header counters
-    // for whatever comes next.
+    // for whatever comes next. Every key of the body was checked against
+    // the table when the body defined it (`body_conflict`), so the merge
+    // only ever adds keys and never replaces one.
     parser.state_action_ref("@table-bc", |rule, context| {
         if !truthy(rule.u.get("top_dive")) {
             if let Some(child) = rule.child_rule.clone() {
@@ -201,9 +243,10 @@ fn register_state_actions(parser: &mut Tabnas) {
     });
 
     // Before the base grammar's own before-close action writes the pair: a
-    // key already in the table is a conflict, not a merge. The pair's cell
-    // is its map's, whose value is the map itself. SUFFIXED as `@map-bo`
-    // is, and `/prepend` so that it runs first.
+    // key already in the table is a conflict, not a merge, whether the body
+    // has it or the table did before the body began. The pair's cell is its
+    // map's, whose value is the map itself. SUFFIXED as `@map-bo` is, and
+    // `/prepend` so that it runs first.
     parser.state_action_ref("@pair-bc/prepend", |rule, context| {
         if !truthy(rule.u.get("pair")) {
             return Ok(());
@@ -212,7 +255,7 @@ fn register_state_actions(parser: &mut Tabnas) {
         if let Some(existing) = existing_at(context, &cell_of(rule), Path::ROOT, &key) {
             return Err(redefined(&key, &existing));
         }
-        Ok(())
+        body_conflict(rule, context, &key)
     });
 }
 
@@ -314,10 +357,14 @@ fn register_alt_actions(parser: &mut Tabnas) {
 
     // A dotted key: `a.b = 1` descends through `a`, so an existing table or
     // array passes and a value under that name is a conflict, exactly as
-    // `[a.b]` would find it. A table it creates is one a dotted key
-    // defined, which no later header may define again.
+    // `[a.b]` would find it. A table it creates or walks through is one a
+    // dotted key defined, which no later header may define again. At the
+    // top of a table body, the key may not be one the table already holds:
+    // `[a.b.c]` `z = 9` then `[a]` `b.c.t = 1` would replace `b` at the
+    // merge, losing `z`.
     parser.action_with_context("@dive-key-dot", |rule, context| {
         let key = key_of(rule, context);
+        body_conflict(rule, context, &key)?;
         let cell = cell_of(rule);
         let mut cursor = Cursor::walk(context, &cell, parent_path(rule));
         let outcome = cursor.table_at(context, &key, Reach::Dive);
