@@ -84,12 +84,13 @@ position in the tree. A `[a.b]` header walks or creates the path `a → b`
 and routes following pairs into it; `[[a]]` appends a fresh map to an array
 at `a`; a dotted key `a.b.c = 1` descends one map per segment. The
 `table` and `dive` rules drive this with counter-guarded alternates
-(`table_dive`, `table_array`; `dive_key` counts a key's segments) and the
-`@table-*` / `@dive-*` actions in `refs.go` that build or reuse the nested
-maps and slices. Both rules walk their segments as replace loops: a
-segment re-enters the rule in the same frame, so the rule stack stays one
-frame deep however long the header or the key, and each segment is handed
-the map the one before it reached as `r.Prev.Node`.
+(`table_dive` and `table_array` for a header, `dive_key` for the tables a
+key has descended through) and the `@table-*` / `@dive-*` actions in
+`refs.go` that build or reuse the nested maps and slices. Both rules walk
+their segments as replace loops: a segment re-enters the rule in the same
+frame, so the rule stack stays one frame deep however long the header or
+the key, and each segment reads the map the one before it reached from
+`r.Prev.Node`.
 
 One Go-specific wrinkle: Go slice headers are not shared through map
 values, so when the table machinery grows an array it writes the new slice
