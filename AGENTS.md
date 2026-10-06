@@ -832,13 +832,12 @@ the exact code and nothing else, and the Rust and TypeScript runners use
 the shared runner's default, which does the same.
 
 The machine-readable list is [`tabnas.plugin.json`](tabnas.plugin.json)
-(`errorCodes`). It is still `[]` and therefore LAGS the two codes above,
-which were added to `ts/src/toml.ts` without it; both are now declared in
-every runtime (`registerErrorMessages` in `go/toml.go` is the Go
-catalogue). Filling it in means deciding whether the list means "declared
-by every runtime" or "declared by any", which is why it is written down
-here rather than guessed at. When a toml-specific code
-is added, declare it in EVERY runtime that can raise it, add it to that
+(`errorCodes`): the two codes above. admin's `make ax-descriptor` generates
+it from the `ts/src/toml.ts` catalogue and fails when the Go catalogue
+(`registerErrorMessages` in `go/toml.go`) disagrees. The Rust port declares
+the same two (`rs/src/lib.rs`), so the list reads the same whether it means
+"declared by every runtime" or "declared by any". When a toml-specific code
+is added, declare it in EVERY runtime that can raise it, regenerate that
 list, and pin it with an `ERROR:<code>` fixture row: the code is the
 contract, and two runtimes that reject the same input with different
 codes have agreed on nothing.
