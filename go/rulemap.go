@@ -3,20 +3,20 @@
 package tabnastoml
 
 import (
-	jsonic "github.com/tabnas/jsonic/go"
+	tabnas "github.com/tabnas/parser/go"
 )
 
 // mapToRules converts a parsed grammar `rule` map into the typed
-// GrammarRuleSpec map expected by jsonic.Grammar(). Mirrors the
+// GrammarRuleSpec map expected by the engine's Grammar method. Mirrors the
 // (unexported) mapToGrammarRules in the jsonic Go package.
-func mapToRules(ruleMap map[string]any) map[string]*jsonic.GrammarRuleSpec {
-	rules := make(map[string]*jsonic.GrammarRuleSpec, len(ruleMap))
+func mapToRules(ruleMap map[string]any) map[string]*tabnas.GrammarRuleSpec {
+	rules := make(map[string]*tabnas.GrammarRuleSpec, len(ruleMap))
 	for name, v := range ruleMap {
 		rm, ok := v.(map[string]any)
 		if !ok {
 			continue
 		}
-		spec := &jsonic.GrammarRuleSpec{}
+		spec := &tabnas.GrammarRuleSpec{}
 		if open, ok := rm["open"]; ok {
 			spec.Open = parseAlts(open)
 		}
@@ -28,12 +28,12 @@ func mapToRules(ruleMap map[string]any) map[string]*jsonic.GrammarRuleSpec {
 	return rules
 }
 
-func parseAlts(v any) []*jsonic.GrammarAltSpec {
+func parseAlts(v any) []*tabnas.GrammarAltSpec {
 	arr, ok := v.([]any)
 	if !ok {
 		return nil
 	}
-	alts := make([]*jsonic.GrammarAltSpec, 0, len(arr))
+	alts := make([]*tabnas.GrammarAltSpec, 0, len(arr))
 	for _, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
@@ -44,8 +44,8 @@ func parseAlts(v any) []*jsonic.GrammarAltSpec {
 	return alts
 }
 
-func mapToAlt(m map[string]any) *jsonic.GrammarAltSpec {
-	alt := &jsonic.GrammarAltSpec{}
+func mapToAlt(m map[string]any) *tabnas.GrammarAltSpec {
+	alt := &tabnas.GrammarAltSpec{}
 
 	// s: string | []string. Grammar parsing yields []any for arrays; the
 	// upstream resolveTokenField only accepts []string, so coerce here.

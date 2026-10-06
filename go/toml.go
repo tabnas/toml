@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	jsonic "github.com/tabnas/jsonic/go"
+	tabnas "github.com/tabnas/parser/go"
 )
 
 // VERSION is this module's version. It MUST equal ts/package.json
@@ -202,7 +203,7 @@ type TomlOptions struct{}
 // shared instance is safe for concurrent use. Mirrors @tabnas/json's Parse.
 var (
 	defaultOnce   sync.Once
-	defaultParser *jsonic.Jsonic
+	defaultParser *tabnas.Tabnas
 )
 
 // Parse parses a TOML source string and returns the result.
@@ -223,7 +224,7 @@ func Parse(src string, opts ...TomlOptions) (any, error) {
 }
 
 // MakeJsonic creates a Jsonic instance configured for TOML parsing.
-func MakeJsonic(opts ...TomlOptions) *jsonic.Jsonic {
+func MakeJsonic(opts ...TomlOptions) *tabnas.Tabnas {
 	j := jsonic.Make()
 	if err := apply(j); err != nil {
 		panic("toml plugin: " + err.Error())
@@ -232,7 +233,7 @@ func MakeJsonic(opts ...TomlOptions) *jsonic.Jsonic {
 }
 
 // apply installs the TOML grammar onto the given Jsonic instance.
-func apply(j *jsonic.Jsonic) error {
+func apply(j *tabnas.Tabnas) error {
 	parsed, err := jsonic.Make().Parse(grammarText)
 	if err != nil {
 		return fmt.Errorf("parse grammar: %w", err)
@@ -260,7 +261,7 @@ func apply(j *jsonic.Jsonic) error {
 	// we do it explicitly before Grammar() so rule alts can resolve them.
 	registerFixedTokens(j, gsMap)
 
-	gs := &jsonic.GrammarSpec{Ref: makeRefs()}
+	gs := &tabnas.GrammarSpec{Ref: makeRefs()}
 	if om, ok := gsMap["options"].(map[string]any); ok {
 		gs.OptionsMap = om
 	}
@@ -309,7 +310,7 @@ func apply(j *jsonic.Jsonic) error {
 }
 
 // toPlainMap recursively converts a Jsonic parse result into plain Go
-// containers, turning any *jsonic.OrderedMap (the engine's insertion-ordered
+// containers, turning any *tabnas.OrderedMap (the engine's insertion-ordered
 // object node) into a map[string]any and walking nested maps and slices. It
 // is used only for the (order-insensitive) grammar-loading path. The bool
 // reports whether the top-level value was an object.
@@ -320,7 +321,7 @@ func toPlainMap(v any) (map[string]any, bool) {
 
 func toPlainValue(v any) any {
 	switch x := v.(type) {
-	case *jsonic.OrderedMap:
+	case *tabnas.OrderedMap:
 		out := make(map[string]any, len(x.Keys))
 		for _, k := range x.Keys {
 			out[k] = toPlainValue(x.Vals[k])
@@ -343,7 +344,7 @@ func toPlainValue(v any) any {
 	}
 }
 
-func registerFixedTokens(j *jsonic.Jsonic, gsMap map[string]any) {
+func registerFixedTokens(j *tabnas.Tabnas, gsMap map[string]any) {
 	om, ok := gsMap["options"].(map[string]any)
 	if !ok {
 		return
@@ -368,20 +369,20 @@ func registerFixedTokens(j *jsonic.Jsonic, gsMap map[string]any) {
 // injectIDLexGuards prepends a never-matching alt that has #ID at
 // position 0 to the close alts of rules where the real alts only
 // expect #ID at position 1. See comment at call site.
-func injectIDLexGuards(j *jsonic.Jsonic) {
+func injectIDLexGuards(j *tabnas.Tabnas) {
 	idTin := j.Token("#ID")
 	stTin := j.Token("#ST")
 	nrTin := j.Token("#NR")
-	idSlot := []jsonic.Tin{stTin, nrTin, idTin}
+	idSlot := []tabnas.Tin{stTin, nrTin, idTin}
 
-	never := jsonic.AltCond(func(_ *jsonic.Rule, _ *jsonic.Context) bool {
+	never := tabnas.AltCond(func(_ *tabnas.Rule, _ *tabnas.Context) bool {
 		return false
 	})
 
 	for _, name := range []string{"table", "pair"} {
-		j.Rule(name, func(rs *jsonic.RuleSpec, _ *jsonic.Parser) {
-			dummy := &jsonic.AltSpec{
-				S: [][]jsonic.Tin{idSlot},
+		j.Rule(name, func(rs *tabnas.RuleSpec, _ *tabnas.Parser) {
+			dummy := &tabnas.AltSpec{
+				S: [][]tabnas.Tin{idSlot},
 				C: never,
 			}
 			rs.PrependClose(dummy)
@@ -391,10 +392,10 @@ func injectIDLexGuards(j *jsonic.Jsonic) {
 
 // registerTomlStringMatcher installs the TOML string matcher at a
 // priority that lets it pre-empt Jsonic's default string lexer.
-func registerTomlStringMatcher(j *jsonic.Jsonic) {
-	j.SetOptions(jsonic.Options{
-		Lex: &jsonic.LexOptions{
-			Match: map[string]*jsonic.MatchSpec{
+func registerTomlStringMatcher(j *tabnas.Tabnas) {
+	j.SetOptions(tabnas.Options{
+		Lex: &tabnas.LexOptions{
+			Match: map[string]*tabnas.MatchSpec{
 				"tomlstring": {
 					Order: 900000, // above match.value/token (1e6) not reached; below fixed tokens.
 					Make:  tomlStringMatcher,
@@ -414,19 +415,19 @@ const bom = "\uFEFF"
 // which is in the IGNORE set, so the parser never sees it. Restricted to
 // source index 0, so a BOM anywhere else stays an error. Go counterpart
 // of the TS plugin's `bom` lex matcher.
-func registerBOMMatcher(j *jsonic.Jsonic) {
-	j.SetOptions(jsonic.Options{
-		Lex: &jsonic.LexOptions{
-			Match: map[string]*jsonic.MatchSpec{
+func registerBOMMatcher(j *tabnas.Tabnas) {
+	j.SetOptions(tabnas.Options{
+		Lex: &tabnas.LexOptions{
+			Match: map[string]*tabnas.MatchSpec{
 				"bom": {
 					Order: 500000, // before match (1e6) and the string matcher.
-					Make: func(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher {
-						return func(lex *jsonic.Lex, _ *jsonic.Rule) *jsonic.Token {
+					Make: func(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher {
+						return func(lex *tabnas.Lex, _ *tabnas.Rule) *tabnas.Token {
 							pnt := lex.Cursor()
 							if pnt.SI != 0 || !strings.HasPrefix(lex.Src, bom) {
 								return nil
 							}
-							tkn := lex.Token("#SP", jsonic.TinSP, nil, bom)
+							tkn := lex.Token("#SP", tabnas.TinSP, nil, bom)
 							pnt.SI += len(bom)
 							pnt.CI += len(bom)
 							return tkn
@@ -441,14 +442,14 @@ func registerBOMMatcher(j *jsonic.Jsonic) {
 // registerSpecialFloats adds TOML's +/- nan and +/- inf keyword values
 // alongside the standard true/false/null, since setting Value.Def
 // replaces Jsonic's defaults entirely.
-func registerSpecialFloats(j *jsonic.Jsonic) {
+func registerSpecialFloats(j *tabnas.Tabnas) {
 	posInf := math.Inf(1)
 	negInf := math.Inf(-1)
 	nan := math.NaN()
 
-	j.SetOptions(jsonic.Options{
-		Value: &jsonic.ValueOptions{
-			Def: map[string]*jsonic.ValueDef{
+	j.SetOptions(tabnas.Options{
+		Value: &tabnas.ValueOptions{
+			Def: map[string]*tabnas.ValueDef{
 				"true":  {Val: true},
 				"false": {Val: false},
 				"null":  {Val: nil},
@@ -501,8 +502,8 @@ func stripUnsupported(gsMap map[string]any) {
 // a document rejected by two ports is rejected in the same words. Every
 // other code this port raises is inherited from the engine and from
 // jsonic, and is not redeclared here.
-func registerErrorMessages(j *jsonic.Jsonic) {
-	j.SetOptions(jsonic.Options{
+func registerErrorMessages(j *tabnas.Tabnas) {
+	j.SetOptions(tabnas.Options{
 		Error: map[string]string{
 			"toml_key_conflict": "cannot define {key}, {why}",
 			"invalid_datetime":  "date or time is out of range",

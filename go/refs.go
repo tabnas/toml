@@ -6,19 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 
-	jsonic "github.com/tabnas/jsonic/go"
+	tabnas "github.com/tabnas/parser/go"
 )
 
-// Object nodes in this port are insertion-ordered *jsonic.OrderedMap values,
+// Object nodes in this port are insertion-ordered *tabnas.OrderedMap values,
 // matching the engine's default object node (and the TS port's plain-object
 // insertion order). newMap allocates a fresh one; asMap type-asserts a node
 // to *OrderedMap. Container nodes flowing in from the shared engine (the map
 // and pair rules) are already OrderedMaps, so building ours the same way lets
 // @table-bc / the dive+array handlers merge and index them uniformly.
-func newMap() *jsonic.OrderedMap { return jsonic.NewOrderedMap() }
+func newMap() *tabnas.OrderedMap { return tabnas.NewOrderedMap() }
 
-func asMap(v any) (*jsonic.OrderedMap, bool) {
-	om, ok := v.(*jsonic.OrderedMap)
+func asMap(v any) (*tabnas.OrderedMap, bool) {
+	om, ok := v.(*tabnas.OrderedMap)
 	return om, ok
 }
 
@@ -26,8 +26,8 @@ func asMap(v any) (*jsonic.OrderedMap, bool) {
 // references via @-prefixed strings. State-action names
 // (@<rule>-<bo|ao|bc|ac>) are auto-wired by Jsonic's Grammar() via
 // wireStateActions.
-func makeRefs() map[jsonic.FuncRef]any {
-	return map[jsonic.FuncRef]any{
+func makeRefs() map[tabnas.FuncRef]any {
+	return map[tabnas.FuncRef]any{
 
 		// --- Value-match callbacks (datetime / time) ---
 
@@ -36,22 +36,22 @@ func makeRefs() map[jsonic.FuncRef]any {
 
 		// --- State actions (auto-wired by rule name convention) ---
 
-		"@toml-bo": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+		"@toml-bo": tabnas.StateAction(func(r *tabnas.Rule, _ *tabnas.Context) {
 			r.Node = newMap()
 		}),
 
-		"@table-bo": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+		"@table-bo": tabnas.StateAction(func(r *tabnas.Rule, _ *tabnas.Context) {
 			r.Node = r.Parent.Node
 		}),
 
 		// Merge the body into the table. Every key of the body was checked
 		// against the table when the body defined it (bodyTable), so this
 		// only ever adds keys and never replaces one.
-		"@table-bc": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+		"@table-bc": tabnas.StateAction(func(r *tabnas.Rule, _ *tabnas.Context) {
 			if r.U["top_dive"] != nil {
 				return
 			}
-			if r.Child == nil || r.Child == jsonic.NoRule {
+			if r.Child == nil || r.Child == tabnas.NoRule {
 				return
 			}
 			child, okc := asMap(r.Child.Node)
@@ -64,23 +64,23 @@ func makeRefs() map[jsonic.FuncRef]any {
 			}
 		}),
 
-		"@table-ac": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+		"@table-ac": tabnas.StateAction(func(r *tabnas.Rule, _ *tabnas.Context) {
 			// Reset the dive/array counters on the rule that the parser
 			// transitions to after this table closes. Mirrors the TS
 			// handler that receives `next` as its third arg.
 			next := r.Next
-			if next != nil && next != jsonic.NoRule {
+			if next != nil && next != tabnas.NoRule {
 				n := next.EnsureN()
 				n["table_dive"] = 0
 				n["table_array"] = 0
 			}
 		}),
 
-		"@dive-bc": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+		"@dive-bc": tabnas.StateAction(func(r *tabnas.Rule, _ *tabnas.Context) {
 			if r.U["dive_end"] == nil {
 				return
 			}
-			if r.O0 == nil || r.O0 == jsonic.NoToken {
+			if r.O0 == nil || r.O0 == tabnas.NoToken {
 				return
 			}
 			key, ok := r.O0.Val.(string)
@@ -96,7 +96,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// Before the base grammar's own before-close action writes the
 		// pair: a key already in the table is a conflict, not a merge,
 		// whether the body has it or the table did before the body began.
-		"@pair-bc/prepend": jsonic.StateAction(func(r *jsonic.Rule, _ *jsonic.Context) {
+		"@pair-bc/prepend": tabnas.StateAction(func(r *tabnas.Rule, _ *tabnas.Context) {
 			if _, ok := r.U["pair"]; !ok {
 				return
 			}
@@ -120,7 +120,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// `#CS`-terminated one DEFINES it, and tableAt / arrayAt below
 		// answer with the node or refuse with `toml_key_conflict`.
 
-		"@table-dive-start": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
+		"@table-dive-start": tabnas.AltAction(func(r *tabnas.Rule, ctx *tabnas.Context) {
 			key := tokenString(r.O0)
 			parent, ok := asMap(r.Parent.Node)
 			if !ok {
@@ -140,7 +140,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 			land(r, tableAt(parent, key, ctx, DESCEND), parent, key)
 		}),
 
-		"@table-dive-mid": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
+		"@table-dive-mid": tabnas.AltAction(func(r *tabnas.Rule, ctx *tabnas.Context) {
 			key := tokenString(r.O0)
 			if _, ok := r.Prev.Node.([]any); ok {
 				// Descending through an array of tables lands in its last
@@ -160,7 +160,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 			land(r, tableAt(prev, key, ctx, DESCEND), prev, key)
 		}),
 
-		"@table-key-cs-head": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
+		"@table-key-cs-head": tabnas.AltAction(func(r *tabnas.Rule, ctx *tabnas.Context) {
 			key := tokenString(r.O0)
 			parent, ok := asMap(r.Parent.Node)
 			if !ok {
@@ -173,9 +173,9 @@ func makeRefs() map[jsonic.FuncRef]any {
 			land(r, tableAt(parent, key, ctx, DEFINE), parent, key)
 		}),
 
-		"@table-key-cs-tail": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
+		"@table-key-cs-tail": tabnas.AltAction(func(r *tabnas.Rule, ctx *tabnas.Context) {
 			key := tokenString(r.O0)
-			var prev *jsonic.OrderedMap
+			var prev *tabnas.OrderedMap
 			if _, ok := r.Prev.Node.([]any); ok {
 				// The segment before this one descended through an array
 				// of tables; the key is defined in its LAST table, as a
@@ -197,7 +197,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 			land(r, tableAt(prev, key, ctx, DEFINE), prev, key)
 		}),
 
-		"@table-cs-push": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
+		"@table-cs-push": tabnas.AltAction(func(r *tabnas.Rule, ctx *tabnas.Context) {
 			arr, ok := r.Prev.Node.([]any)
 			if !ok {
 				// `[[a]]` where `a` is already a scalar. The array itself
@@ -218,8 +218,8 @@ func makeRefs() map[jsonic.FuncRef]any {
 			r.Node = newM
 		}),
 
-		"@pair-key-set": jsonic.AltAction(func(r *jsonic.Rule, _ *jsonic.Context) {
-			if r.O0 != nil && r.O0 != jsonic.NoToken {
+		"@pair-key-set": tabnas.AltAction(func(r *tabnas.Rule, _ *tabnas.Context) {
+			if r.O0 != nil && r.O0 != tabnas.NoToken {
 				r.EnsureU()["key"] = r.O0.Val
 			}
 		}),
@@ -244,7 +244,7 @@ func makeRefs() map[jsonic.FuncRef]any {
 		// on as r.Prev.Node when the dive replaced itself, exactly as
 		// @table-dive-mid reads a header's. It used to push a dive per
 		// segment, so rule depth grew with the key.
-		"@dive-key-dot": jsonic.AltAction(func(r *jsonic.Rule, ctx *jsonic.Context) {
+		"@dive-key-dot": tabnas.AltAction(func(r *tabnas.Rule, ctx *tabnas.Context) {
 			key := tokenString(r.O0)
 			begins := !continuesKey(r)
 			from := r.Parent.Node
@@ -265,36 +265,36 @@ func makeRefs() map[jsonic.FuncRef]any {
 
 		// --- Conditions ---
 
-		"@table-top-dive-cond": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
+		"@table-top-dive-cond": tabnas.AltCond(func(r *tabnas.Rule, _ *tabnas.Context) bool {
 			return r.D == 1 && (r.Prev == nil || r.Prev.Name != "table")
 		}),
 
-		"@lte-table-dive": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
+		"@lte-table-dive": tabnas.AltCond(func(r *tabnas.Rule, _ *tabnas.Context) bool {
 			return r.Lte("table_dive", 0)
 		}),
 
-		"@lte-table-array-1": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
+		"@lte-table-array-1": tabnas.AltCond(func(r *tabnas.Rule, _ *tabnas.Context) bool {
 			return r.Lte("table_array", 1)
 		}),
 
-		"@lte-pk": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
+		"@lte-pk": tabnas.AltCond(func(r *tabnas.Rule, _ *tabnas.Context) bool {
 			return r.Lte("pk", 0)
 		}),
 
-		"@map-is-table-parent": jsonic.AltCond(func(r *jsonic.Rule, _ *jsonic.Context) bool {
+		"@map-is-table-parent": tabnas.AltCond(func(r *tabnas.Rule, _ *tabnas.Context) bool {
 			return r.Parent != nil && r.Parent.Name == "table"
 		}),
 
 		// --- Dynamic push/replace targets ---
 
-		"@table-end-p": func(r *jsonic.Rule, _ *jsonic.Context) string {
+		"@table-end-p": func(r *tabnas.Rule, _ *tabnas.Context) string {
 			if r.N["table_array"] > 0 {
 				return ""
 			}
 			return "map"
 		},
 
-		"@table-end-r": func(r *jsonic.Rule, _ *jsonic.Context) string {
+		"@table-end-r": func(r *tabnas.Rule, _ *tabnas.Context) string {
 			if r.N["table_array"] > 0 {
 				return "table"
 			}
@@ -308,14 +308,14 @@ func makeRefs() map[jsonic.FuncRef]any {
 // dive pushed by a pair or a map begins a key, and so does one reached
 // through the close loop from a dive that ENDED a key (dive_end), which
 // takes the next dotted key without returning to the pair.
-func continuesKey(r *jsonic.Rule) bool {
+func continuesKey(r *tabnas.Rule) bool {
 	prev := r.Prev
-	return prev != nil && prev != jsonic.NoRule && prev.Name == "dive" && prev.U["dive_end"] == nil
+	return prev != nil && prev != tabnas.NoRule && prev.Name == "dive" && prev.U["dive_end"] == nil
 }
 
 // tokenString returns a token's value as a string.
-func tokenString(t *jsonic.Token) string {
-	if t == nil || t == jsonic.NoToken {
+func tokenString(t *tabnas.Token) string {
+	if t == nil || t == tabnas.NoToken {
 		return ""
 	}
 	if s, ok := t.Val.(string); ok {
@@ -356,11 +356,11 @@ const (
 // header has yet defined: the only existing tables a header may define.
 // Kept per parse, in the context's bag for plugin state, so that a table's
 // history never leaves a mark on the value a reader gets back.
-func implicitTables(ctx *jsonic.Context) map[*jsonic.OrderedMap]bool {
-	if set, ok := ctx.U["toml_implicit"].(map[*jsonic.OrderedMap]bool); ok {
+func implicitTables(ctx *tabnas.Context) map[*tabnas.OrderedMap]bool {
+	if set, ok := ctx.U["toml_implicit"].(map[*tabnas.OrderedMap]bool); ok {
 		return set
 	}
-	set := map[*jsonic.OrderedMap]bool{}
+	set := map[*tabnas.OrderedMap]bool{}
 	ctx.U["toml_implicit"] = set
 	return set
 }
@@ -375,7 +375,7 @@ func implicitTables(ctx *jsonic.Context) map[*jsonic.OrderedMap]bool {
 // rule stack and the hint registered in registerErrorMessages. Anything
 // else that panics inside an action still becomes `internal`, so this is
 // the one shape a grammar action may raise.
-func keyConflict(ctx *jsonic.Context, key, why string) {
+func keyConflict(ctx *tabnas.Context, key, why string) {
 	keyConflictAt(ctx.T0, key, why)
 }
 
@@ -384,11 +384,11 @@ func keyConflict(ctx *jsonic.Context, key, why string) {
 //
 // Detail is rendered here rather than left to the template, because the
 // funnel re-renders the template without this action's details.
-func keyConflictAt(tkn *jsonic.Token, key, why string) {
+func keyConflictAt(tkn *tabnas.Token, key, why string) {
 	if tkn == nil {
-		tkn = jsonic.NoToken
+		tkn = tabnas.NoToken
 	}
-	panic(&jsonic.JsonicError{
+	panic(&tabnas.TabnasError{
 		Code:   "toml_key_conflict",
 		Detail: fmt.Sprintf("cannot define %s, %s", key, why),
 		Src:    tkn.Src,
@@ -409,7 +409,7 @@ func describe(existing any) string {
 }
 
 // valueAt is the value under key, or nil when the table has none.
-func valueAt(container *jsonic.OrderedMap, key string) any {
+func valueAt(container *tabnas.OrderedMap, key string) any {
 	existing, _ := container.Get(key)
 	return existing
 }
@@ -419,7 +419,7 @@ func valueAt(container *jsonic.OrderedMap, key string) any {
 // allows a key one value, and the base grammar's duplicate-key rule (last
 // wins, tables merged) is not it. Raised on the key's own token, which is
 // where the reader looks.
-func redefines(container *jsonic.OrderedMap, key string, at *jsonic.Token) {
+func redefines(container *tabnas.OrderedMap, key string, at *tabnas.Token) {
 	if existing := valueAt(container, key); existing != nil {
 		keyConflictAt(at, key, describe(existing))
 	}
@@ -442,7 +442,7 @@ func redefines(container *jsonic.OrderedMap, key string, at *jsonic.Token) {
 // it and no header has defined it yet: `[a]` after `[a.b]` is that one case,
 // and `[a]` after `[a]`, after `a.b = 1` or after `a = {}` is a key defined
 // twice; anything else is a value, and a value is not a table.
-func tableAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context, how reach) any {
+func tableAt(container *tabnas.OrderedMap, key string, ctx *tabnas.Context, how reach) any {
 	existing := valueAt(container, key)
 	if existing == nil {
 		m := newMap()
@@ -503,16 +503,16 @@ func tableAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context, how 
 // merge, and the refusal points at the key, as every pair conflict does. A
 // pair or a dotted key in an inline table has no such table: its map is
 // the value itself.
-func bodyTable(r *jsonic.Rule) *jsonic.OrderedMap {
+func bodyTable(r *tabnas.Rule) *tabnas.OrderedMap {
 	m := r.Parent
-	if m != nil && m != jsonic.NoRule && m.Name == "pair" {
+	if m != nil && m != tabnas.NoRule && m.Name == "pair" {
 		m = m.Parent
 	}
-	if m == nil || m == jsonic.NoRule || m.Name != "map" {
+	if m == nil || m == tabnas.NoRule || m.Name != "map" {
 		return nil
 	}
 	t := m.Parent
-	if t == nil || t == jsonic.NoRule || t.Name != "table" {
+	if t == nil || t == tabnas.NoRule || t.Name != "table" {
 		return nil
 	}
 	table, _ := asMap(t.Node)
@@ -522,7 +522,7 @@ func bodyTable(r *jsonic.Rule) *jsonic.OrderedMap {
 // arrayAt is the array of tables under key in container, or a DIAGNOSED
 // refusal to append to something that is not an array: `[[a]]` after
 // `a = 1`, or after `[a]`.
-func arrayAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context) []any {
+func arrayAt(container *tabnas.OrderedMap, key string, ctx *tabnas.Context) []any {
 	existing := valueAt(container, key)
 	if arr, ok := existing.([]any); ok {
 		return arr
@@ -540,7 +540,7 @@ func arrayAt(container *jsonic.OrderedMap, key string, ctx *jsonic.Context) []an
 // remembered with the map that owns it and its key, because a Go slice
 // header does not share through a map value: an append made later has to
 // be written back where the array lives for the next segment to see it.
-func land(r *jsonic.Rule, node any, owner *jsonic.OrderedMap, key string) {
+func land(r *tabnas.Rule, node any, owner *tabnas.OrderedMap, key string) {
 	r.Node = node
 	if _, ok := node.([]any); ok {
 		u := r.EnsureU()
@@ -552,7 +552,7 @@ func land(r *jsonic.Rule, node any, owner *jsonic.OrderedMap, key string) {
 // arrayHome re-reads the array the previous segment landed on from the
 // map that owns it (see land), so that this segment appends to the live
 // array rather than to a stale copy of its slice header.
-func arrayHome(prev *jsonic.Rule) (owner *jsonic.OrderedMap, key string, arr []any) {
+func arrayHome(prev *tabnas.Rule) (owner *tabnas.OrderedMap, key string, arr []any) {
 	owner, _ = asMap(prev.U["arr_parent"])
 	key, _ = prev.U["arr_key"].(string)
 	if owner != nil {
@@ -566,7 +566,7 @@ func arrayHome(prev *jsonic.Rule) (owner *jsonic.OrderedMap, key string, arr []a
 // lastTable is the last table of an array of tables, growing the array by
 // an empty table when it has none and writing the grown array back to its
 // owner. The canonical `last ? last : (arr.push(node()), arr[arr.length - 1])`.
-func lastTable(arr []any, owner *jsonic.OrderedMap, key string) (*jsonic.OrderedMap, []any) {
+func lastTable(arr []any, owner *tabnas.OrderedMap, key string) (*tabnas.OrderedMap, []any) {
 	if n := len(arr); n > 0 {
 		if last, ok := asMap(arr[n-1]); ok {
 			return last, arr

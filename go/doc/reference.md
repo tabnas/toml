@@ -11,14 +11,15 @@ for the rationale and the TS comparison see [concepts](concepts.md).
 import tabnastoml "github.com/tabnas/toml/go"
 ```
 
-Runtime dependency: `github.com/tabnas/jsonic/go` (the engine + base
-grammar). See `go.mod` for the pinned version.
+Runtime dependencies: the engine, `github.com/tabnas/parser/go`,
+imported as `tabnas`, and `github.com/tabnas/jsonic/go` (the base
+grammar). See `go.mod` for the pinned versions.
 
 ## Exported API
 
 ```go
 func Parse(src string, opts ...TomlOptions) (any, error)
-func MakeJsonic(opts ...TomlOptions) *tabnasjsonic.Jsonic
+func MakeJsonic(opts ...TomlOptions) *tabnas.Tabnas
 
 const VERSION = "0.4.3"
 
@@ -33,7 +34,7 @@ type TomlTime struct {
 | Symbol        | Kind     | Purpose                                                |
 | ------------- | -------- | ------------------------------------------------------ |
 | `Parse`       | function | Parse a TOML source string into `any` (a map).         |
-| `MakeJsonic`  | function | Return a configured `*tabnasjsonic.Jsonic` for reuse.        |
+| `MakeJsonic`  | function | Return a configured `*tabnas.Tabnas` for reuse.        |
 | `VERSION`     | const    | Current module version; always equals `ts/package.json` `"version"`. |
 | `TomlOptions` | struct   | Reserved for future options; currently empty.          |
 | `TomlTime`    | struct   | Tagged TOML datetime / time value.                     |
@@ -55,12 +56,12 @@ fresh instance for that call.
 ## `MakeJsonic`
 
 ```go
-func MakeJsonic(opts ...TomlOptions) *tabnasjsonic.Jsonic
+func MakeJsonic(opts ...TomlOptions) *tabnas.Tabnas
 ```
 
-Builds and returns a `*tabnasjsonic.Jsonic` with the TOML grammar applied. Use
+Builds and returns a `*tabnas.Tabnas` with the TOML grammar applied. Use
 it to keep a parser around across many calls, or to hand to code that
-expects a `*tabnasjsonic.Jsonic`. Call `.Parse(src)` on the returned instance.
+expects a `*tabnas.Tabnas`. Call `.Parse(src)` on the returned instance.
 
 ## `TomlTime`
 
