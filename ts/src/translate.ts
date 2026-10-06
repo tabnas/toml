@@ -19,6 +19,7 @@ const TRANSLATION: TranslationParts = Object.freeze({
   "$schema": "https://tabnas.dev/schema/plugin.schema.json",
   "name": "@tabnas/toml",
   "go": "github.com/tabnas/toml/go",
+  "rust": "tabnas-toml",
   "description": "TOML parsing for the tabnas engine.",
   "base": "@tabnas/jsonic",
   "engine": "@tabnas/parser",
@@ -50,7 +51,10 @@ const TRANSLATION: TranslationParts = Object.freeze({
       "internal"
     ]
   },
-  "errorCodes": [],
+  "errorCodes": [
+    "toml_key_conflict",
+    "invalid_datetime"
+  ],
   "docs": "https://tabnas.dev/docs/packages",
   "repository": "https://github.com/tabnas/toml",
   "versionSource": "ts/package.json",
