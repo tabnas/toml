@@ -88,7 +88,7 @@ divergence.
 | Path | What it is |
 |---|---|
 | [`ts/`](ts/) | **Canonical** TypeScript implementation — the `@tabnas/toml` package. Plugin in `src/toml.ts`. Imports the engine as `@tabnas/parser` and the base grammar as `@tabnas/jsonic`. |
-| [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const VERSION` in `go/toml.go`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Depends on `github.com/tabnas/jsonic/go` (jsonic re-exports the engine API in Go). |
+| [`go/`](go/) | Go port — `github.com/tabnas/toml/go` (`const VERSION` in `go/toml.go`). Plugin entry in `toml.go`; supporting files `strmatcher.go`, `datematcher.go`, `values.go`, `refs.go`, `rulemap.go`. Imports the engine as `tabnas` (`github.com/tabnas/parser/go`) for the engine's types, and `github.com/tabnas/jsonic/go` for jsonic's own `jsonic.Make`. |
 | [`rs/`](rs/) | Rust port — crate `tabnas-toml`, library `tabnas_toml` (`pub const VERSION` in `rs/src/lib.rs`). Plugin entry in `src/lib.rs`; supporting modules `refs.rs`, `node.rs`, `strmatcher.rs`, `datematcher.rs`, `daterange.rs`, `values.rs`. Depends on `tabnas` and `tabnas-jsonic` as sibling path checkouts. See [`rs/AGENTS.md`](rs/AGENTS.md). |
 | [`alchemy/render.alc`](alchemy/render.alc) | **TOML's render**, an [alchemy](https://github.com/tabnas/alchemy) library whose entry point `toml-render` writes a tree's events as one TOML document: every key quoted, every table under a key an inline table on its key's line. The manifest's `translate` object in [`tabnas.plugin.json`](tabnas.plugin.json) names it and says what a written document does not keep (`loss`); the Rust crate embeds copies of both under `rs/translate/` as `render_text()` and `manifest_text()`, and `rs/tests/translate_test.rs` holds the copies to the files, so change the file here and copy it there. The round trip that runs the render needs alchemy, which this repository does not depend on; it runs in aless's suite. |
 | [`toml-grammar.jsonic`](toml-grammar.jsonic) | The grammar (repo top level), **source of truth for every runtime**. Embedded verbatim into all three source files. |
@@ -115,11 +115,16 @@ publish tagged releases):
   `ts/test/toml.test.ts` and the unmaintained `ts/test/quick.js` scratch
   script (whose `require('@tabnas/jsonic/debug')` no longer resolves).
   There is **no** `debug.model()` test in this repo.
-- Go: `go/go.mod` requires `github.com/tabnas/jsonic/go` with
-  `replace github.com/tabnas/jsonic/go => ../../jsonic/go`. That is the
-  module's **only** tabnas dependency — the Go jsonic package re-exports
-  the engine types (`jsonic.Make`, `jsonic.Jsonic`, `jsonic.Rule`, …),
-  so the Go files import `jsonic`, not `parser`, directly.
+- Go: `go/go.mod` requires `github.com/tabnas/parser/go` and
+  `github.com/tabnas/jsonic/go` directly (and `github.com/tabnas/support/go`
+  for the tests), with `github.com/tabnas/json/go` as the indirect module
+  jsonic pulls in. There is no `replace` directive: every requirement
+  names a published version, and the `go.work` that admin's `make link`
+  generates points Go at the sibling checkouts. The Go files import the
+  engine as `tabnas` for the engine's types (`tabnas.Tabnas`,
+  `tabnas.Rule`, `tabnas.Options`, …); only `toml.go` imports `jsonic`,
+  for jsonic's own `jsonic.Make`, which builds the base engine in
+  `MakeJsonic` and reads the grammar text.
 
 - Rust: `rs/Cargo.toml` takes `tabnas = { package = "tabnas-parser", path = "../../parser/rs" }`,
   `tabnas-jsonic = { path = "../../jsonic/rs" }` and, as a

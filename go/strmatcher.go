@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	jsonic "github.com/tabnas/jsonic/go"
+	tabnas "github.com/tabnas/parser/go"
 )
 
 // tomlStringMatcher returns a LexMatcher that recognises TOML's basic,
@@ -20,8 +20,8 @@ import (
 // Registered at a priority higher than jsonic's default string matcher
 // so it wins for `"` and `'`-delimited inputs but leaves other lexing
 // untouched.
-func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher {
-	return func(lex *jsonic.Lex, _ *jsonic.Rule) *jsonic.Token {
+func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher {
+	return func(lex *tabnas.Lex, _ *tabnas.Rule) *tabnas.Token {
 		pnt := lex.Cursor()
 		src := lex.Src
 		srcLen := len(src)
@@ -47,7 +47,7 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 				// `""` or `''`: empty string.
 				pnt.SI = sI + 2
 				pnt.CI = cI + 2
-				return lex.Token("#ST", jsonic.TinST, "", src[begin:sI+2])
+				return lex.Token("#ST", tabnas.TinST, "", src[begin:sI+2])
 			}
 			sI += 2
 			cI += 2
@@ -149,7 +149,7 @@ func tomlStringMatcher(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher
 				pnt.SI = sI
 				pnt.CI = cI
 				pnt.RI = rI
-				return lex.Token("#ST", jsonic.TinST, b.String(), src[begin:sI])
+				return lex.Token("#ST", tabnas.TinST, b.String(), src[begin:sI])
 
 			default:
 				if sI >= srcLen {

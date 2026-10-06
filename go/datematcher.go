@@ -5,7 +5,7 @@ package tabnastoml
 import (
 	"regexp"
 
-	jsonic "github.com/tabnas/jsonic/go"
+	tabnas "github.com/tabnas/parser/go"
 )
 
 // Date / time value regexps — the same shapes the grammar's
@@ -29,12 +29,12 @@ var (
 // key-accepting rules (toml, map, dive, pair, table) do. Custom matchers
 // aren't told which tI they're at, so we scan every alt's S[*] to stay
 // consistent with the TS port's tcol-scan heuristic.
-func isKeyContext(idTin jsonic.Tin, rule *jsonic.Rule) bool {
+func isKeyContext(idTin tabnas.Tin, rule *tabnas.Rule) bool {
 	if rule == nil || rule.Spec == nil {
 		return false
 	}
 	alts := rule.Spec.OpenAlts()
-	if rule.State == jsonic.CLOSE {
+	if rule.State == tabnas.CLOSE {
 		alts = rule.Spec.CloseAlts()
 	}
 	for _, alt := range alts {
@@ -56,12 +56,12 @@ func isKeyContext(idTin jsonic.Tin, rule *jsonic.Rule) bool {
 // by @isodate-val / @localtime-val, and `inRange` rejects a value whose
 // shape matched but whose components cannot denote a real instant.
 func makeDateMatcher(
-	idTin jsonic.Tin,
+	idTin tabnas.Tin,
 	re *regexp.Regexp,
 	toVal func([]string) any,
 	inRange func(string) bool,
-) jsonic.LexMatcher {
-	return func(lex *jsonic.Lex, rule *jsonic.Rule) *jsonic.Token {
+) tabnas.LexMatcher {
+	return func(lex *tabnas.Lex, rule *tabnas.Rule) *tabnas.Token {
 		pnt := lex.Cursor()
 		if pnt.SI >= len(lex.Src) {
 			return nil
@@ -72,7 +72,7 @@ func makeDateMatcher(
 		}
 		msrc := m[0]
 		mlen := len(msrc)
-		var tkn *jsonic.Token
+		var tkn *tabnas.Token
 		if isKeyContext(idTin, rule) {
 			// A bare key that merely looks like a date is not a date, so its
 			// components are not required to be in range: `2006-01-32 = 1`
@@ -83,7 +83,7 @@ func makeDateMatcher(
 			if !inRange(msrc) {
 				return lex.Bad("invalid_datetime")
 			}
-			tkn = lex.Token("#VL", jsonic.TinVL, toVal(m), msrc)
+			tkn = lex.Token("#VL", tabnas.TinVL, toVal(m), msrc)
 		}
 		pnt.SI += mlen
 		pnt.CI += mlen
@@ -96,24 +96,24 @@ func makeDateMatcher(
 // regex-based isodate / localtime value matchers. Those regex entries
 // remain in the config as dead code — this matcher always consumes any
 // text they would have matched first.
-func registerDateMatchers(j *jsonic.Jsonic) {
+func registerDateMatchers(j *tabnas.Tabnas) {
 	idTin := j.Token("#ID")
 	isodate := makeDateMatcher(idTin, isodateRe, isodateVal, isodateInRange)
 	localtime := makeDateMatcher(
 		idTin, localtimeRe, localtimeVal, localtimeInRange)
 
-	j.SetOptions(jsonic.Options{
-		Lex: &jsonic.LexOptions{
-			Match: map[string]*jsonic.MatchSpec{
+	j.SetOptions(tabnas.Options{
+		Lex: &tabnas.LexOptions{
+			Match: map[string]*tabnas.MatchSpec{
 				"tomlisodate": {
 					Order: 950000,
-					Make: func(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher {
+					Make: func(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher {
 						return isodate
 					},
 				},
 				"tomllocaltime": {
 					Order: 950001,
-					Make: func(_ *jsonic.LexConfig, _ *jsonic.Options) jsonic.LexMatcher {
+					Make: func(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher {
 						return localtime
 					},
 				},

@@ -35,7 +35,7 @@ The common no-options call reuses a single cached engine, so repeated
 ## Keep a parser for many parses
 
 When you want an explicit, reusable instance (for example to pass to code
-that expects a `*tabnasjsonic.Jsonic`), build one with `MakeJsonic` and call its
+that expects a `*tabnas.Tabnas`), build one with `MakeJsonic` and call its
 `Parse`:
 
 ```go
@@ -45,7 +45,7 @@ r2, _ := j.Parse(`host = "db"`)
 ```
 
 Building the instance installs the whole TOML grammar (the expensive
-step); parsing only reads instance state, so a shared `*tabnasjsonic.Jsonic` is
+step); parsing only reads instance state, so a shared `*tabnas.Tabnas` is
 safe to reuse.
 
 ## Parse a file from disk
