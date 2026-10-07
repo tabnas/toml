@@ -99,17 +99,21 @@ divergence.
 
 ## The tabnas engine dependency
 
-All three runtimes depend on the unpublished `@tabnas` siblings via a
-**sibling checkout** (the standard tabnas dev model until the packages
-publish tagged releases):
+TypeScript and Go resolve published `@tabnas` packages, from the npm
+registry and the Go module proxy, so a sibling checkout is optional local
+wiring there. Only Rust needs one:
 
 - TypeScript: `@tabnas/parser` and `@tabnas/jsonic` are declared as
-  `peerDependencies` (`">=2"`) in `ts/package.json` and mirrored as
-  `file:../../parser/ts` / `file:../../jsonic/ts` devDependencies for
-  local builds (npm >=7 / Node >=24 auto-installs peers; `engines.node`
-  is `">=24"`). `@tabnas/debug` and `@tabnas/railroad` are dev-only
-  `file:` devDependencies — railroad to regenerate
-  `ts/doc/grammar.{svg,txt}`. `@tabnas/debug` is **not actively used**:
+  `peerDependencies` (`">=0"`) in `ts/package.json` and mirrored as
+  `"*"` devDependencies for local builds (npm >=7 / Node >=24
+  auto-installs peers; `engines.node` is `">=24"`). `@tabnas/debug`,
+  `@tabnas/railroad` and `@tabnas/support` are dev-only `"*"`
+  devDependencies — railroad to regenerate `ts/doc/grammar.{svg,txt}`,
+  support for the shared fixture loader and runner the `.tsv` tests use.
+  None is a `file:` path: each resolves to whatever the install leaves in
+  `ts/node_modules/@tabnas/`, a symlink to the sibling checkout where
+  admin's `scripts/link.sh` wired one, the registry copy otherwise.
+  `@tabnas/debug` is **not actively used**:
   jsonic no longer re-exports it (there is no `@tabnas/jsonic/debug`
   subpath), so the only references are a commented-out import in
   `ts/test/toml.test.ts` and the unmaintained `ts/test/quick.js` scratch
@@ -136,9 +140,9 @@ publish tagged releases):
   resolution there is. `ci/rust/run.sh` checks for all four before it
   runs anything.
 
-Clone the siblings (`parser`, `jsonic`, plus `railroad` for the diagram)
-next to this repo and build their TS first. CI does this for you (see
-below).
+Only the Rust side needs sibling checkouts: clone `parser`, `jsonic`,
+`json` and `support` next to this repo. CI clones the siblings it builds
+against and links them over the registry copies (see below).
 
 ## Authority and alignment rules
 
@@ -417,7 +421,7 @@ not remove them without fixing what they paper over.
 TypeScript (from `ts/`):
 
 ```bash
-npm install            # auto-installs peers; resolves file: siblings
+npm install            # auto-installs peers; resolves the @tabnas devDependencies from the registry
 npm run build          # embeds grammar, then tsc --build src && tsc --build test
 npm test               # node --test over dist-test/*.test.js
 ```
@@ -456,9 +460,10 @@ every runtime: `make build|test|clean` run the TS, Go and Rust sides, and
 `make publish-go V=x.y.z` injects `V` into the `const VERSION` in
 `go/toml.go`, commits, and tags `go/vX.Y.Z`. `make publish-ts` publishes
 the TS package at its `package.json` version. Local builds resolve the
-unpublished siblings via the repo-set `go.work` + node_modules symlinks
-(`admin/scripts/link.sh`); there is no checked-in `go.work` in this
-repo.
+published siblings unless `admin/scripts/link.sh` has wired in the
+checkouts, through the repo-set `go.work` and the
+`ts/node_modules/@tabnas/*` symlinks; there is no checked-in `go.work`
+in this repo.
 
 ## Verify your work
 
