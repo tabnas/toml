@@ -95,7 +95,14 @@ matcher.
 
 ## Install
 
-None of these crates is published to a registry, so they are consumed as
+The crate, the jsonic core and the engine are published on crates.io.
+The engine's package is `tabnas-parser`, imported in code as `tabnas`:
+
+```bash
+cargo add tabnas-toml tabnas-jsonic tabnas-parser
+```
+
+To build from source instead, as this repository does, they are consumed as
 **sibling checkouts**, the standard tabnas development model. Clone all
 three of `https://github.com/tabnas/parser`,
 `https://github.com/tabnas/jsonic` and `https://github.com/tabnas/json`

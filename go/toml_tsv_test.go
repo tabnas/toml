@@ -7,9 +7,9 @@ package tabnastoml
 //
 // The fixture loader, the escape codec, the ERROR:<code> contract and the
 // row loop all come from github.com/tabnas/support/go, whose TypeScript
-// half ts/test/toml-tsv.test.ts uses to run the SAME files — so the two
-// implementations cannot drift without one of them going red, and neither
-// can the two loaders.
+// and Rust halves ts/test/toml-tsv.test.ts and rs/tests/parity_test.rs use
+// to run the SAME files — so the implementations cannot drift without one
+// of them going red, and neither can the loaders.
 //
 // What is left here is only what is specific to toml: how to build the
 // parser, and flattening the result for comparison.
@@ -24,8 +24,8 @@ import (
 )
 
 // TestSpec runs every fixture in the spec directory. Discovery is by
-// listing, so adding a .tsv runs it in both runtimes without touching
-// either runner — it used to have to be named in a list, once per runtime.
+// listing, so adding a .tsv runs it in every runtime without touching
+// any runner — it used to have to be named in a list, once per runtime.
 func TestSpec(t *testing.T) {
 	dir, err := support.FindSpecDir("")
 	if err != nil {

@@ -38,8 +38,15 @@ Go:
 go get github.com/tabnas/toml/go@latest
 ```
 
-Rust: the crate is not published, because it takes the engine and the
-jsonic core as path dependencies. Clone
+Rust: the crate, the jsonic core and the engine are on crates.io, so a
+project does not need a checkout of any of them:
+
+```sh
+cargo add tabnas-toml tabnas-jsonic tabnas-parser
+```
+
+To build from source instead, the way this repository does, take the
+engine and the jsonic core as path dependencies. Clone
 `https://github.com/tabnas/parser`, `https://github.com/tabnas/jsonic`
 and `https://github.com/tabnas/json` beside this repository, then point
 at three of them:

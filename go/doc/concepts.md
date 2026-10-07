@@ -20,10 +20,10 @@ matchers, plus a small `Parse` / `MakeJsonic` API that installs them.
 
 The TOML grammar lives in one file, `toml-grammar.jsonic`, at the
 repository root, written in jsonic syntax. The TypeScript build embeds it
-into `ts/src/toml.ts`; the same text is embedded into `go/toml.go` between
-the `BEGIN/END EMBEDDED` markers. Keeping the grammar as shared data is
-what keeps the two runtimes in sync: both are checked against the shared
-`test/spec/*.tsv` fixtures.
+into `ts/src/toml.ts`; the same text is embedded into `go/toml.go` and
+`rs/src/lib.rs` between the `BEGIN/END EMBEDDED` markers. Keeping the
+grammar as shared data is what keeps the three runtimes in sync: all three
+are checked against the shared `test/spec/*.tsv` fixtures.
 
 At load time `apply()` parses the embedded grammar text with a jsonic
 engine, then installs it via `j.Grammar(gs)`, resolving the grammar's
@@ -110,7 +110,7 @@ with no key (`= 1`); an unterminated string (`"unterminated`).
 
 ## Differences from the TS version
 
-The two ports parse the same grammar and pass the same shared fixtures,
+TypeScript and Go parse the same grammar and pass the same shared fixtures,
 but the language shapes differ:
 
 | Aspect            | TypeScript                               | Go                                        |
@@ -140,8 +140,8 @@ Implementation differences (no behavioural effect on parse results):
 
 ## Design rationale
 
-- **One grammar, two runtimes.** Authoring the grammar once as data and
-  embedding it into both ports makes behaviour match by construction.
+- **One grammar, three runtimes.** Authoring the grammar once as data and
+  embedding it into every port makes behaviour match by construction.
 - **Reuse the engine.** Building on jsonic gives TOML the engine's lexer,
   error reporting, and rule machinery; the port only expresses what is
   different about TOML.

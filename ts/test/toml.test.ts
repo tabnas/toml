@@ -35,7 +35,7 @@ import { Toml } from '..'
 //   valid/    must parse AND produce the correct value. Asserted at 100%.
 //   invalid/  must be rejected. The parser does not reject them all yet, so
 //             this is asserted against an EXACT measured count kept in
-//             test/conformance.tsv — one file, both runtimes. See that
+//             test/conformance.tsv — one file, every runtime. See that
 //             file's header for why exact and not a floor.
 
 const SUITE_URL = 'https://github.com/BurntSushi/toml-test'
@@ -685,14 +685,15 @@ describe('toml', () => {
 
 
 // The invalid-half conformance counts, read from `test/conformance.tsv` at
-// the repo root — the SAME file `go/toml_valid_test.go` reads, through the
-// same @tabnas/support loader.
+// the repo root — the SAME file `go/toml_valid_test.go` and
+// `rs/tests/toml_valid_test.rs` read, through the same @tabnas/support
+// loader.
 //
 // They used to be two constants here and two more in the Go suite, all four
 // commented "MEASURED on 2026-08-09" against the same pinned corpus, reading
 // 227/212 and 230/230, with nothing comparing them. See that file's header
-// for why they are now exact rather than floors, and for what the 9-document
-// gap between the two runtimes is.
+// for why they are now exact rather than floors, and for what the gap
+// between the ts and go rows is.
 const CONFORMANCE = readConformance('ts')
 
 function readConformance(runtime: string) {

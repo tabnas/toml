@@ -30,8 +30,9 @@ only covers what is specific to this crate.
 Crate `tabnas-toml`, library `tabnas_toml`. The engine (`tabnas`), the
 jsonic core (`tabnas-jsonic`) and the fixture runner (`tabnas-support`,
 dev only) are **path dependencies on sibling checkouts**
-(`../../parser/rs`, `../../jsonic/rs`, `../../support/rs`). None is
-published, so there is no registry version to fall back on.
+(`../../parser/rs`, `../../jsonic/rs`, `../../support/rs`). They are on
+crates.io, but the committed manifest names them by path alone, so there
+is no registry version to fall back on.
 
 A FOURTH checkout, `../../json/rs`, is needed and is named by no entry
 here: `tabnas-jsonic` takes the strict-JSON core as its own path

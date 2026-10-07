@@ -35,8 +35,8 @@ tn.grammar(grammarDef)
 so the grammar definition is bootstrapped by the same machinery it
 configures. Function hooks referenced in the grammar by `@name` strings
 (`@table-dive-start`, `@lte-table-dive`, …) are resolved against the
-`refs` map. A second, identical embed lives in the Go port; keeping the
-grammar as shared data is what keeps the two runtimes in sync.
+`refs` map. Identical embeds live in the Go and Rust ports; keeping the
+grammar as shared data is what keeps the three runtimes in sync.
 
 ## Two stages: lexer then parser
 
@@ -134,8 +134,8 @@ are switched off, because TOML comments use `#` only.
 
 ## Design rationale
 
-- **One grammar, two runtimes.** The grammar is authored once as data and
-  embedded into both the TS and Go ports, so behaviour matches by
+- **One grammar, three runtimes.** The grammar is authored once as data and
+  embedded into the TS, Go and Rust ports, so behaviour matches by
   construction and is checked against shared `test/spec/*.tsv` fixtures
   plus the external BurntSushi `toml-test` conformance suite.
 - **Reuse the engine.** Building on tabnas + jsonic means TOML gets the
