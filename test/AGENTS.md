@@ -16,7 +16,7 @@ Tab-separated, one case per line, with a header row naming the columns
 
 ### What the loader actually does — mind these
 
-There is one loader now, from `@tabnas/support`, in two languages written
+There is one loader now, from `@tabnas/support`, in three languages written
 to behave identically. Its
 [reference](https://github.com/tabnas/support/blob/main/doc/reference.md)
 is the authority; what matters here:
@@ -31,7 +31,7 @@ is the authority; what matters here:
   every data row does. That is exactly the rule `comments.tsv` needs, and
   it is the shared loader's rule, not a local quirk. A `#`-leading line
   with NO tab is a comment and is skipped; there are none here.
-- Both runtimes split on every tab and read the columns by name from the
+- Every runtime splits on every tab and reads the columns by name from the
   header.
 
 ## The divergence register — `test/divergent.tsv`
@@ -150,7 +150,7 @@ comparison surfaced it; running it down showed TypeScript's string matcher
 returning a valid token for an unterminated string — so the `unexpected` came
 from the grammar tripping over the one leftover character, not from any
 diagnosis, and where nothing was left over malformed TOML parsed silently.
-TypeScript is fixed; both runtimes answer `unterminated_string`.
+TypeScript is fixed; every runtime answers `unterminated_string`.
 
 ## The conformance counts — `test/conformance.tsv`
 
@@ -163,10 +163,10 @@ file's own header gives. The `rust` row reproduces the `ts` row.
 ## Rules
 
 - Prefer adding a fixture here over a one-off in-language assertion when a
-  case is expressible as input → output. That is what keeps the two runtimes
+  case is expressible as input → output. That is what keeps the runtimes
   honest against each other.
 - TypeScript is canonical. If the runtimes disagree, the TS behaviour is
-  the expected value — unless Go has exposed a genuine TS defect, or the
+  the expected value — unless another port has exposed a genuine TS defect, or the
   difference is one of the intentional divergences the root `AGENTS.md`
   records, which stay out of these shared fixtures.
 - A new fixture must pass in EVERY runtime before it counts:

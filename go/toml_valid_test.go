@@ -46,14 +46,14 @@ var suiteRoot = filepath.Join("..", "ts", "test", "toml-test")
 var fetchScript = filepath.Join("..", "scripts", "fetch-toml-test.sh")
 
 // The invalid-half conformance counts, read from ../test/conformance.tsv —
-// the SAME file ../ts/test/toml.test.ts reads, through the same
-// github.com/tabnas/support/go loader.
+// the SAME file ../ts/test/toml.test.ts and ../rs/tests/toml_valid_test.rs
+// read, through the same shared loader in each language.
 //
 // They used to be two constants here and two more in the TypeScript suite,
 // all four commented "MEASURED on 2026-08-09" against the same pinned
 // corpus, reading 230/230 and 227/212, with nothing comparing them. See that
 // file's header for why they are now exact rather than floors, and for what
-// the 9-document gap between the two runtimes is.
+// the gap between the ts and go rows is.
 
 // conformance is one runtime's row of ../test/conformance.tsv.
 type conformance struct {

@@ -8,8 +8,9 @@
 # `tabnas = { package = "tabnas-parser", path = "../../parser/rs" }`,
 # `tabnas-jsonic = { path = "../../jsonic/rs" }`, and as a dev-dependency
 # `tabnas-support = { path = "../../support/rs" }`). jsonic in turn takes
-# the JSON core the same way, so that checkout is needed too. None is
-# published, so there is no registry version to fall back on. Clone
+# the JSON core the same way, so that checkout is needed too. They are on
+# crates.io, but the committed manifest names them by path alone, so there
+# is no registry version to fall back on. Clone
 # https://github.com/tabnas/parser, https://github.com/tabnas/json,
 # https://github.com/tabnas/jsonic and https://github.com/tabnas/support
 # next to this repo before running.

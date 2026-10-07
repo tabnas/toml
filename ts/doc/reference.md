@@ -186,8 +186,8 @@ written in jsonic syntax. `ts/embed-grammar.js` copies it verbatim into
 ```
 
 Run `npm run embed` (or `npm run build`, which embeds then compiles) after
-editing the grammar. The same file is embedded into the Go port, so the
-two runtimes stay in sync.
+editing the grammar. The same file is embedded into the Go and Rust ports,
+so the three runtimes stay in sync.
 
 ## npm scripts
 

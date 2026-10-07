@@ -134,11 +134,11 @@ wiring there. Only Rust needs one:
   `tabnas-jsonic = { path = "../../jsonic/rs" }` and, as a
   dev-dependency for the shared fixtures,
   `tabnas-support = { path = "../../support/rs" }`. jsonic in turn takes
-  `tabnas-json` the same way, so that checkout is needed too. None of the
-  crates is published — each depends on the engine by path, and crates.io
-  does not accept a path dependency — so a sibling checkout is the only
-  resolution there is. `ci/rust/run.sh` checks for all four before it
-  runs anything.
+  `tabnas-json` the same way, so that checkout is needed too. The crates
+  are on crates.io, but the committed manifest stays path-only (admin
+  ADR-21; `crates-release.yml` rewrites the paths only in the copy it
+  publishes), so a sibling checkout is the only resolution there is here.
+  `ci/rust/run.sh` checks for all four before it runs anything.
 
 Only the Rust side needs sibling checkouts: clone `parser`, `jsonic`,
 `json` and `support` next to this repo. CI clones the siblings it builds
@@ -394,20 +394,23 @@ The suites are no longer allowed to skip, but the BOM rule they cover
 tests: `leading-bom` in `ts/test/toml.test.ts` and `TestLeadingBOM` in
 `go/features_test.go`.
 
-Both tests normalise the parse result into the `{type, value}` shape the
-toml-test fixtures use (TS via a `JSON.stringify` replacer + `JSON.parse`
-reviver in `norm()`; Go via the recursive `normalizeForToml` walk), with
-a matching set of name-keyed fixups for cases where int-vs-float can't be
-recovered from a plain JS/Go number (an integer-valued float like `+1.0`
-or `3e2`). The *values* themselves need no rescuing: both engines preserve
+All three tests normalise the parse result into the `{type, value}` shape
+the toml-test fixtures use (TS via a `JSON.stringify` replacer +
+`JSON.parse` reviver in `norm()`; Go via the recursive `normalizeForToml`
+walk; Rust via `normalize` in `rs/tests/toml_valid_test.rs`), with a
+matching set of name-keyed fixups for cases where int-vs-float can't be
+recovered from a plain number (an integer-valued float like `+1.0` or
+`3e2`). The *values* themselves need no rescuing: the engines preserve
 negative zero and the special floats, so `-0` is read straight off the
 parsed number (`Object.is(v, -0)` in TS, `v == 0 && math.Signbit(v)` in
-Go) and `inf`/`nan` off `math.IsInf`/`math.IsNaN`. When you touch one
-side's normalisation, mirror it in the other.
+Go, `is_sign_negative()` in Rust) and `inf`/`nan` off
+`math.IsInf`/`math.IsNaN` in Go and the matching `f64` checks in Rust.
+When you touch one harness's normalisation, mirror it in the other two.
 
-Those fixup keys are written with `/`, so both sides canonicalise the
+Those fixup keys are written with `/`, so every harness canonicalises the
 fixture name to forward slashes before matching (`rawName.split(Path.sep)
-.join('/')` in TS, `filepath.ToSlash` in Go). Skipping that in TS is a
+.join('/')` in TS, `filepath.ToSlash` in Go, path components joined with
+`/` in Rust's `corpus`). Skipping that in TS is a
 Windows-only failure: `Path.join` yields `\`, every two-segment key stops
 matching, and exactly the slash-bearing fixups go dark. It bit on the
 first run that ever reached a Windows runner with the corpus present.
@@ -497,9 +500,9 @@ around it; the wiring is fixed instead, and
 What "correct" means here, in order of authority:
 
 1. **The shared fixtures pass in EVERY runtime.** `test/spec/*.tsv` is the
-   parity contract — a row green in one runtime and red in the other is a
-   failure, not a discrepancy. Discovery is by directory listing in both
-   runtimes (`go/toml_tsv_test.go` `TestSpec` lists `test/spec/`), so a new
+   parity contract — a row green in one runtime and red in another is a
+   failure, not a discrepancy. Discovery is by directory listing in every
+   runtime (`go/toml_tsv_test.go` `TestSpec` lists `test/spec/`), so a new
    `.tsv` file runs everywhere without touching a runner.
 2. **The toml-test conformance suite holds.** `valid/` is asserted at 100%,
    and the `invalid/` counts match `test/conformance.tsv` exactly — never
@@ -571,12 +574,14 @@ The steps, in order:
    suite then passes against unreleased code while appearing to verify the
    published one. Reinstalling is the part that matters.
 
-   One thing a clean install does **not** isolate:
-   `ts/test/doc-examples.test.*` resolves `@tabnas/*` by filesystem path
-   (`const TABNAS = path.join(REPO, '..')`), not through `node_modules`. If
-   unbuilt sibling checkouts sit beside this repo, those blocks fail with
-   `MODULE_NOT_FOUND` no matter what you installed — build the siblings, or
-   verify somewhere they are absent.
+   The clean install covers the doc examples too:
+   `ts/test/doc-examples.test.*` resolves a doc example's `require`
+   through `node_modules` first, and only a `@tabnas/*` package that is
+   not installed falls back to the sibling checkout `../<x>/ts`
+   (`const TABNAS = path.join(REPO, '..')`), with `@tabnas/toml` itself
+   served from this repository's `ts/`. The tested examples name only
+   `@tabnas/jsonic` and `@tabnas/parser`, installed devDependencies, and
+   `@tabnas/toml`, so none of them reaches a sibling checkout.
 
    `npm test` already compiles here: `ts/package.json` sets `pretest` to
    `npm run build`, which npm runs automatically. No separate build step is
@@ -590,13 +595,17 @@ The steps, in order:
    ```bash
    (
      cd go
-     go mod edit -json | grep -q '"Replace": null' || { echo 'go.mod has a replace'; exit 1; }
+     go mod edit -json | jq -e '.Replace == null' >/dev/null || { echo 'go.mod has a replace'; exit 1; }
      GOWORK=off go test -count=1 ./...
    )
    ```
 
    `-count=1` because shared fixtures live outside the Go module, so a
-   changed corpus does not invalidate the test cache.
+   changed corpus does not invalidate the test cache. The check asks `jq`,
+   not `grep`: current Go leaves the `Replace` key out when there is no
+   replace, where older Go printed `"Replace": null`, and `jq` reads a
+   missing key as null, so the check passes on a clean `go.mod` and fails
+   on a replace either way.
 3. **Merge the bump through a reviewed PR.** That is the house convention —
    `CONTRIBUTING.md` squash-merges PRs and takes the title as the commit
    message — and what `release.yml`'s own header describes. A direct push to
