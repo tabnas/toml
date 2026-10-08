@@ -18,7 +18,7 @@ import (
 // VERSION is this module's version. It MUST equal ts/package.json
 // "version": the release orchestrator rewrites both, and
 // TestVersionMatchesPackageJSON fails the build if they drift.
-const VERSION = "0.5.14"
+const VERSION = "0.5.15"
 
 // --- BEGIN EMBEDDED toml-grammar.jsonic ---
 const grammarText = `
