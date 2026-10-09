@@ -18,28 +18,48 @@
 ; non-finite one is `inf`, `-inf` or `nan`; a boolean is `true` or
 ; `false`.
 ;
-; What TOML cannot carry fails with INPUT_INVALID, saying so: a root that
-; is not a table, since TOML's document is one, and a null, since TOML
-; has none. The failure names the place (a root member, an inline table's
-; member, an array); a member's key is the last text the render wrote
-; before it.
+; TOML has no null, so a null is not written, as `toml-options` says: a
+; member whose value is null is omitted, key included, and a null element
+; of an array is skipped, with no separator left behind. So `[1, null, 2]`
+; is written `[ 1, 2 ]` and `[null]` is `[]`, an inline table whose
+; members are all null is `{}`, and a document whose root members are all
+; null is written as no text at all. That is why a key is not written
+; when it arrives: it is held, and written with the first event of its
+; value (a scalar, the start of a table, the start of an array), or
+; dropped unwritten with a null.
+;
+; The root must be a table, since TOML's document is one: any other root
+; fails with TARGET_VALUE_UNREPRESENTABLE, saying what it is. A host that
+; composes the render puts any other root under a key of a table first,
+; as the manifest's `root` (`object`) asks, so only a caller that runs
+; the render directly meets that refusal.
 ;
 ; The events are a tree's: a table holds each key once. A walked value
 ; is one by construction; a host that streams a parse must refuse a
 ; member the parse repeats, since the render writes what it is given and
 ; TOML forbids a key defined twice.
 ;
-; The state is the stack of open containers, one marker each, so it grows
-; with a document's nesting and never with its width: `:root` for the
-; root table waiting for a key, `:member` for a root member whose key is
-; written and waits for its value, `:table-open` for an inline table with
-; nothing written yet, `:table` for one waiting for its next key,
-; `:table-member` for its member whose key is written, `:array-open` for
-; an array with nothing written yet and `:array` for one waiting for its
-; next item. The separators are decided by the marker, so no container
-; counts its members. Once the root table ends the state is
-; `[:root-done]`, and nothing may follow it. Events no tree has fail with
-; INPUT_INVALID, saying so.
+; The state is the stack of open containers, one marker each, and the
+; key it holds, at most one, so it grows with a document's nesting and
+; never with its width: `:root` for the root table waiting for a key,
+; `[:key name]` above its table's marker for a key held until its value
+; begins, `:member` for a root member whose value is being written,
+; `:table-open` for an inline table with nothing written yet, `:table` for
+; one waiting for its next key, `:table-member` for its member whose value
+; is being written, `:array-open` for an array with nothing written yet
+; and `:array` for one waiting for its next item. The separators are
+; decided by the marker, so no container counts its members, and a null
+; that is not written leaves its container's marker as it was. Once the
+; root table ends the state is `[:root-done]`, and nothing may follow it.
+; Events no tree has fail with PROTOCOL_ORDER_ERROR, saying so.
+
+; The render's policies, each read where it applies. `:null` is how a
+; null is written where a value is due: `:omit`, the one policy, writes
+; nothing, so a member whose value is null is not written, key included,
+; and a null element of an array is skipped.
+def toml-options
+  record
+    entry :null :omit
 
 ; The top marker, or `:none` before the root value.
 def toml-top [s]
@@ -51,20 +71,44 @@ def toml-top [s]
 def toml-mark [marker s]
   push marker (pop s)
 
-; What comes before a value whose parent is the top of s: nothing after a
-; key's ` = `, a space before an array's first item and `, ` before a
-; later one.
+; A key, held above its table's marker until the first event of its value
+; writes it or a null drops it. At most one is held, since the event after
+; a key is its value's.
+def toml-key [name s]
+  match (toml-top s)
+    case :root (transition (push [:key name] s) [])
+    case :table-open (transition (push [:key name] s) [])
+    case :table (transition (push [:key name] s) [])
+    case _ (fail :protocol-order "the events hold a key where a value is due, which a tree's never do")
+
+; What leads a key in the table at the top of s: nothing at the start of
+; a root member's line, a space after an inline table's opening brace and
+; `, ` after its last member.
+def toml-key-lead [s]
+  match (toml-top s)
+    case :root ""
+    case :table-open " "
+    case :table ", "
+
+; What comes before a value whose parent is the top of s: the key held for
+; it, led as its table needs and followed by ` = `; a space before an
+; array's first item and `, ` before a later one.
 def toml-lead [s]
   match (toml-top s)
-    case :member ""
-    case :table-member ""
+    case [:key name] (string-join "" [(toml-key-lead (pop s)) (quoted name) " = "])
     case :array-open " "
     case :array ", "
-    case _ (fail "the events hold a value where a key is due, which a tree's never do")
+    case _ (fail :protocol-order "the events hold a value where a key is due, which a tree's never do")
 
-; A held array is opened by its first item.
+; The state once a value begins under the top of s: a held key is
+; written, so its table's marker says that a member's value is being
+; written, and a held array is opened by its first item.
 def toml-entered [s]
   match (toml-top s)
+    case [:key _]
+      match (toml-top (pop s))
+        case :root (toml-mark :member (pop s))
+        case _ (toml-mark :table-member (pop s))
     case :array-open (toml-mark :array s)
     case _ s
 
@@ -90,19 +134,25 @@ def toml-number [n]
     case :negative-infinity "-inf"
     case :nan "nan"
 
-; TOML has no null. The place is the top of s, where the value was due;
-; the key written before a member's null is in the output already.
+; A null where a value is due at the top of s, as `toml-options` says.
 def toml-null [s]
-  match (toml-top s)
-    case :member (fail "TOML has no null: a member of the root table holds one, which TOML cannot carry")
-    case :table-member (fail "TOML has no null: a member of an inline table holds one, which TOML cannot carry")
-    case _ (fail "TOML has no null: an array holds one, which TOML cannot carry")
+  match (get :null toml-options)
+    case :omit (toml-omit s)
 
-; A scalar due at the top of s: a string as a basic string, a number by
-; its lexeme or its value, a boolean by its name.
-def toml-scalar [value s]
+; A null not written: a member's drops the key held for it, unwritten,
+; and an array's leaves the array as it was, so no separator is left
+; behind.
+def toml-omit [s]
+  match (toml-top s)
+    case [:key _] (transition (pop s) [])
+    case :array-open (transition s [])
+    case :array (transition s [])
+    case _ (fail :protocol-order "the events hold a value where a key is due, which a tree's never do")
+
+; A scalar other than null: a string as a basic string, a number by its
+; lexeme or its value, a boolean by its name.
+def toml-scalar [value]
   match (kind value)
-    case :null (toml-null s)
     case :boolean
       match value
         case true "true"
@@ -110,29 +160,26 @@ def toml-scalar [value s]
     case :number (toml-number value)
     case _ (quoted value)
 
+; A scalar due at the top of s, written with what leads it and what
+; follows it, or a null, written as `toml-options` says.
+def toml-value [value s]
+  match (kind value)
+    case :null (toml-null s)
+    case _
+      let [s2 (toml-entered s)]
+        transition (toml-done s2) [(toml-lead s) (toml-scalar value) (toml-close s2)]
+
 ; A root that is not a table: TOML's document is one.
 def toml-root-scalar [value]
   match (kind value)
-    case :null (fail "TOML's root is a table: the document's root is null, which TOML cannot carry")
-    case :boolean (fail "TOML's root is a table: the document's root is a boolean, which TOML cannot carry")
-    case :number (fail "TOML's root is a table: the document's root is a number, which TOML cannot carry")
-    case _ (fail "TOML's root is a table: the document's root is a string, which TOML cannot carry")
-
-; A key, written where the table's keys go: at the start of its own line
-; at the root, after the opening brace or a comma in an inline table.
-def toml-member [name s]
-  match (toml-top s)
-    case :root
-      transition (toml-mark :member s) [(quoted name) " = "]
-    case :table-open
-      transition (toml-mark :table-member s) [" " (quoted name) " = "]
-    case :table
-      transition (toml-mark :table-member s) [", " (quoted name) " = "]
-    case _ (fail "the events hold a key where a value is due, which a tree's never do")
+    case :null (fail :unrepresentable "TOML's root is a table: the document's root is null, which TOML cannot carry")
+    case :boolean (fail :unrepresentable "TOML's root is a table: the document's root is a boolean, which TOML cannot carry")
+    case :number (fail :unrepresentable "TOML's root is a table: the document's root is a number, which TOML cannot carry")
+    case _ (fail :unrepresentable "TOML's root is a table: the document's root is a string, which TOML cannot carry")
 
 def toml-step [s event]
   match (toml-top s)
-    case :root-done (fail "the events hold more after the root table, which a tree's never do")
+    case :root-done (fail :protocol-order "the events hold more after the root table, which a tree's never do")
     case _ (toml-event s event)
 
 def toml-event [s event]
@@ -143,15 +190,13 @@ def toml-event [s event]
         case _ (transition (push :table-open (toml-entered s)) [(toml-lead s) "{"])
     case array-start
       match (toml-top s)
-        case :none (fail "TOML's root is a table: the document's root is an array, which TOML cannot carry")
+        case :none (fail :unrepresentable "TOML's root is a table: the document's root is an array, which TOML cannot carry")
         case _ (transition (push :array-open (toml-entered s)) [(toml-lead s) "["])
-    case (key name) (toml-member name s)
+    case (key name) (toml-key name s)
     case (scalar value)
       match (toml-top s)
         case :none (toml-root-scalar value)
-        case _
-          let [s2 (toml-entered s)]
-            transition (toml-done s2) [(toml-lead s) (toml-scalar value s) (toml-close s2)]
+        case _ (toml-value value s)
     case object-end
       match (toml-top s)
         case :root (transition [:root-done] [])
@@ -159,12 +204,10 @@ def toml-event [s event]
           transition (toml-done (pop s)) ["}" (toml-close (pop s))]
         case :table
           transition (toml-done (pop s)) [" }" (toml-close (pop s))]
-        case :member
-          fail "the events end a table after a key and before its value, which a tree's never do"
-        case :table-member
-          fail "the events end a table after a key and before its value, which a tree's never do"
+        case [:key _]
+          fail :protocol-order "the events end a table after a key and before its value, which a tree's never do"
         case _
-          fail "the events end a table that is not open, which a tree's never do"
+          fail :protocol-order "the events end a table that is not open, which a tree's never do"
     case array-end
       match (toml-top s)
         case :array-open
@@ -172,13 +215,13 @@ def toml-event [s event]
         case :array
           transition (toml-done (pop s)) [" ]" (toml-close (pop s))]
         case _
-          fail "the events end an array that is not open, which a tree's never do"
+          fail :protocol-order "the events end an array that is not open, which a tree's never do"
 
 def toml-finish [s]
   match (toml-top s)
     case :root-done []
-    case :none (fail "the events hold no value, where a tree's hold one")
-    case _ (fail "the events ended inside a container")
+    case :none (fail :protocol-order "the events hold no value, where a tree's hold one")
+    case _ (fail :protocol-order "the events ended inside a container")
 
 ; The render: the tree's events in, the document's text out.
 def toml-render [input]

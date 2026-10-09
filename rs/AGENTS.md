@@ -21,7 +21,7 @@ only covers what is specific to this crate.
 | `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns and rows, key conflicts, the depth guard, the canonical message templates, the embedded grammar, threads |
 | `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
-| `tests/translate_test.rs` | the translation parts: the render the embedded manifest names is the one `render_text()` embeds, the manifest's shapes and loss lines, and every render definition named `toml-...` |
+| `tests/translate_test.rs` | the translation parts: the render the embedded manifest names is the one `render_text()` embeds, the embed it names is the one `translate()` carries (none, for TOML), the manifest's shapes and loss lines, and every render definition named `toml-...` |
 | `tests/perf_test.rs` | `parse` reuses its instance; a parse, a dotted header and a dotted key take time in proportion to their length; a header and a key 5,000 segments deep; a key keeps rule depth constant over 10,000 segments |
 | `tests/version_test.rs` | Cargo.toml == `VERSION` == ts/package.json |
 | `tests/common/mod.rs` | shared helpers: spec dir, repo dir, value and failure conversion |

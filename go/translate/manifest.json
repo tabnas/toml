@@ -44,13 +44,15 @@
   "translate": {
     "reads": "tree",
     "writes": "tree",
+    "root": "object",
     "render": "alchemy/render.alc",
     "loss": [
       "Comments are not kept.",
       "Every key is written as a quoted key, and every table under a key as an inline table on that key's line.",
       "Every string is written as a basic string on one line, its line breaks escaped; a literal or multi-line string is not kept as one.",
       "A date or time is written as a string, since the reader builds one as text.",
-      "A number is written as JSON writes its value, not as the document spelled it: a hexadecimal, octal or binary integer, an underscore and an exponent are not kept, and a whole float such as 1.0 is written as an integer."
+      "A number is written as JSON writes its value, not as the document spelled it: a hexadecimal, octal or binary integer, an underscore and an exponent are not kept, and a whole float such as 1.0 is written as an integer.",
+      "A null is not written: a member whose value is null is omitted, and a null element of an array is skipped."
     ]
   }
 }
