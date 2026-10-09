@@ -70,7 +70,8 @@ const TRANSLATION: TranslationParts = Object.freeze({
       "Every string is written as a basic string on one line, its line breaks escaped; a literal or multi-line string is not kept as one.",
       "A date or time is written as a string, since the reader builds one as text.",
       "A number is written as JSON writes its value, not as the document spelled it: a hexadecimal, octal or binary integer, an underscore and an exponent are not kept, and a whole float such as 1.0 is written as an integer.",
-      "A null is not written: a member whose value is null is omitted, and a null element of an array is skipped."
+      "A null is not written: a member whose value is null is omitted, and a null element of an array is skipped.",
+      "An integer TOML's 64-bit integers cannot hold, below -9223372036854775808 or above 9223372036854775807, is written as a float, its digits followed by .0, and reads back as the nearest double; a number that is not finite is written inf, -inf or nan, whatever its lexeme."
     ]
   }
 }
@@ -91,9 +92,11 @@ const TRANSLATION: TranslationParts = Object.freeze({
 ; trailing comma; an array is \`[ v, v ]\`, and \`[]\` when empty, and may
 ; hold inline tables and arrays. A number is its lexeme, or as the JSON
 ; renderer writes it when it has none, which is how every number reaches
-; a render from a parsed TOML document (so \`1.0\` is written as \`1\`), and a
-; non-finite one is \`inf\`, \`-inf\` or \`nan\`; a boolean is \`true\` or
-; \`false\`.
+; a render from a parsed TOML document (so \`1.0\` is written as \`1\`); an
+; integer TOML's 64-bit integers cannot hold is written as a float, \`.0\`
+; after its digits, which TOML reads as the double nearest it, as a JSON
+; reader does; and a number that is not finite is \`inf\`, \`-inf\` or \`nan\`,
+; whatever its lexeme. A boolean is \`true\` or \`false\`.
 ;
 ; TOML has no null, so a null is not written, as \`toml-options\` says: a
 ; member whose value is null is omitted, key included, and a null element
@@ -204,12 +207,71 @@ def toml-close [s]
     case :member "\\n"
     case _ ""
 
+; A number: a finite one by its text, as \`toml-finite\` writes it, and one
+; that is not finite as TOML spells it, \`inf\`, \`-inf\` or \`nan\`, whatever
+; its lexeme (JSON's \`1E400\` is \`inf\`).
 def toml-number [n]
   match (number-class n)
-    case :finite (scalar-text csv-options n)
+    case :finite (toml-finite (scalar-text csv-options n))
     case :infinity "inf"
     case :negative-infinity "-inf"
     case :nan "nan"
+
+; A finite number's text, its lexeme or the JSON renderer's text of its
+; value: as it is, unless it is an integer TOML's 64-bit integers cannot
+; hold, which is written as a float, \`.0\` after its digits, so that TOML
+; reads the double nearest the integer, as a JSON reader reads it.
+def toml-finite [text]
+  match (toml-integer-fits text)
+    case true text
+    case false (string-join "" [text ".0"])
+
+; The characters of a non-negative integer's text, and of any integer's.
+def toml-digits [[48 57]]
+
+def toml-integer-chars [[45 45] [48 57]]
+
+; The two doubles either side of 2^63 x 10^23, the upper one and the
+; lower one negated. 2^63 x 10^23 is 5^23 x 2^86, and 5^23 is odd and one
+; bit longer than a double's significand, so it is exactly their midpoint.
+def toml-above-midpoint 9.223372036854777e+41
+
+def toml-below-midpoint-negated -9.223372036854775e+41
+
+; Whether a number's text is a float's, or an integer's that TOML's
+; integers hold, from -9223372036854775808 to 9223372036854775807. An
+; integer's text is digits, after a minus sign when it is negative; a
+; float's has a point or an exponent besides. The count of digits decides,
+; but at nineteen, where the range ends, a double cannot: \`compare\` sees
+; every integer from 2^63-512 to 2^63+1024 as the one double 2^63. So the
+; text is scaled by 10^23 and read as a number, whose rounding to the
+; doubles either side of the midpoint 2^63 x 10^23 decides exactly: a
+; non-negative n followed by \`5e22\`, n x 10^23 + 5 x 10^22, rounds to the
+; upper one or above exactly when n is 2^63 or more, and a negative -n
+; followed by \`e23\`, -n x 10^23, rounds below the lower one negated
+; exactly when n is more than 2^63, since the midpoint itself, 2^63
+; scaled, rounds to the one whose significand is even, the lower.
+def toml-integer-fits [text]
+  match (chars-within toml-digits text)
+    case true
+      match (compare (length text) 19)
+        case :less true
+        case :greater false
+        case :equal
+          match (compare (number (string-join "" [text "5e22"])) toml-above-midpoint)
+            case :less true
+            case _ false
+    case false
+      match (chars-within toml-integer-chars text)
+        case false true
+        case true
+          match (compare (length text) 20)
+            case :less true
+            case :greater false
+            case :equal
+              match (compare (number (string-join "" [text "e23"])) toml-below-midpoint-negated)
+                case :less false
+                case _ true
 
 ; A null where a value is due at the top of s, as \`toml-options\` says.
 def toml-null [s]

@@ -52,7 +52,8 @@
       "Every string is written as a basic string on one line, its line breaks escaped; a literal or multi-line string is not kept as one.",
       "A date or time is written as a string, since the reader builds one as text.",
       "A number is written as JSON writes its value, not as the document spelled it: a hexadecimal, octal or binary integer, an underscore and an exponent are not kept, and a whole float such as 1.0 is written as an integer.",
-      "A null is not written: a member whose value is null is omitted, and a null element of an array is skipped."
+      "A null is not written: a member whose value is null is omitted, and a null element of an array is skipped.",
+      "An integer TOML's 64-bit integers cannot hold, below -9223372036854775808 or above 9223372036854775807, is written as a float, its digits followed by .0, and reads back as the nearest double; a number that is not finite is written inf, -inf or nan, whatever its lexeme."
     ]
   }
 }
