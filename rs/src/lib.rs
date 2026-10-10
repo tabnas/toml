@@ -793,6 +793,8 @@ pub struct TranslationParts {
     pub manifest: &'static str,
     /// An optional lift from the grammar's events to its first read shape.
     pub lift: Option<TranslationPart>,
+    /// An optional embedding of a plain tree in the format's schema, with its reverse.
+    pub embed: Option<TranslationPart>,
     /// An optional render from the write shape to text.
     pub render: Option<TranslationPart>,
 }
@@ -800,6 +802,7 @@ pub struct TranslationParts {
 const TRANSLATION: TranslationParts = TranslationParts {
     manifest: include_str!("../translate/manifest.json"),
     lift: None,
+    embed: None,
     render: Some(TranslationPart {
         entry: "toml-render",
         source: Some(include_str!("../translate/render.alc")),
