@@ -133,6 +133,11 @@ const TRANSLATION: TranslationParts = Object.freeze({
 ; that is not written leaves its container's marker as it was. Once the
 ; root table ends the state is \`[:root-done]\`, and nothing may follow it.
 ; Events no tree has fail with PROTOCOL_ORDER_ERROR, saying so.
+;
+; Each root member's line is a record of the text: the step that ends one
+; answers alchemy's \`:record-end\` after its line feed, and so does the
+; step that opens the root table, so a host's writer holds a line until
+; its end, and a run that fails part way leaves whole lines behind.
 
 ; The render's policies, each read where it applies. \`:null\` is how a
 ; null is written where a value is due: \`:omit\`, the one policy, writes
@@ -207,6 +212,14 @@ def toml-close [s]
   match (toml-top s)
     case :member "\\n"
     case _ ""
+
+; The outputs of a step that completes a value under the top of s, with
+; the end of a record after them when the value is a root member's: its
+; line is written whole.
+def toml-ended [s outputs]
+  match (toml-top s)
+    case :member (push :record-end outputs)
+    case _ outputs
 
 ; A number: a finite one by its text, as \`toml-finite\` writes it, and one
 ; that is not finite as TOML spells it, \`inf\`, \`-inf\` or \`nan\`, whatever
@@ -307,7 +320,7 @@ def toml-value [value s]
     case :null (toml-null s)
     case _
       let [s2 (toml-entered s)]
-        transition (toml-done s2) [(toml-lead s) (toml-scalar value) (toml-close s2)]
+        transition (toml-done s2) (toml-ended s2 [(toml-lead s) (toml-scalar value) (toml-close s2)])
 
 ; A root that is not a table: TOML's document is one.
 def toml-root-scalar [value]
@@ -326,7 +339,7 @@ def toml-event [s event]
   match event
     case object-start
       match (toml-top s)
-        case :none (transition [:root] [])
+        case :none (transition [:root] [:record-end])
         case _ (transition (push :table-open (toml-entered s)) [(toml-lead s) "{"])
     case array-start
       match (toml-top s)
@@ -341,9 +354,9 @@ def toml-event [s event]
       match (toml-top s)
         case :root (transition [:root-done] [])
         case :table-open
-          transition (toml-done (pop s)) ["}" (toml-close (pop s))]
+          transition (toml-done (pop s)) (toml-ended (pop s) ["}" (toml-close (pop s))])
         case :table
-          transition (toml-done (pop s)) [" }" (toml-close (pop s))]
+          transition (toml-done (pop s)) (toml-ended (pop s) [" }" (toml-close (pop s))])
         case [:key _]
           fail :protocol-order "the events end a table after a key and before its value, which a tree's never do"
         case _
@@ -351,9 +364,9 @@ def toml-event [s event]
     case array-end
       match (toml-top s)
         case :array-open
-          transition (toml-done (pop s)) ["]" (toml-close (pop s))]
+          transition (toml-done (pop s)) (toml-ended (pop s) ["]" (toml-close (pop s))])
         case :array
-          transition (toml-done (pop s)) [" ]" (toml-close (pop s))]
+          transition (toml-done (pop s)) (toml-ended (pop s) [" ]" (toml-close (pop s))])
         case _
           fail :protocol-order "the events end an array that is not open, which a tree's never do"
 
