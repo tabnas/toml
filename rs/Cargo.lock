@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "tabnas-toml"
-version = "0.5.17"
+version = "0.5.18"
 dependencies = [
  "indexmap",
  "regex",
