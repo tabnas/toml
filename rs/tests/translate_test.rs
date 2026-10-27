@@ -54,6 +54,27 @@ fn the_render_the_manifest_names_is_the_one_the_crate_embeds() {
     );
 }
 
+#[test]
+fn the_transducer_the_manifest_names_is_the_one_the_crate_embeds() {
+    let translate = translate();
+    let path = translate["transduce"]
+        .as_str()
+        .expect("translate.transduce names a file");
+    let on_disk = fs::read_to_string(common::repo_dir().join(path))
+        .unwrap_or_else(|e| panic!("translate.transduce names {path}, which cannot be read: {e}"));
+    let parts = tabnas_toml::translate().expect("TOML carries translation parts");
+    let transduce = parts
+        .transduce
+        .expect("translate.transduce names a file, and the crate carries no transducer");
+    assert_eq!(transduce.entry, "toml-transduce");
+    assert_eq!(
+        transduce.source,
+        Some(on_disk.as_str()),
+        "translate.transduce names {path}, and rs/translate/transduce.alc, which translate() \
+         carries, is another text: run npm run embed in ts"
+    );
+}
+
 /// An embed takes a plain tree into a format's own schema. TOML's events
 /// carry a plain tree, so its manifest names none and the crate carries
 /// none; a manifest that named one would be held to its file here, as the
