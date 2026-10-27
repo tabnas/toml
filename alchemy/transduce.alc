@@ -1,0 +1,375 @@
+; TOML's transducer part: the document's JSON events from the toml
+; grammar's rule passes, for a host that reads parser events (dmog's
+; `translate` and `run --grammar toml`). It is hand-written, since the
+; grammar builds its tables, its dotted keys and its arrays of tables in
+; its actions, which the passes do not show; every event is the one the
+; walk of the grammar's value under its default options gives, a member at
+; a time.
+;
+; The passes: `toml` opens and closes the root object. A value is jsonic's:
+; a `list` opens and closes an array, an inline `map`, opened on `{`, an
+; object, a `pair` opened on its key token and `=` names a member, and a
+; `val` that pushed no container yields its scalar at its close, from the
+; value the close carries. A header is read from the `table` passes: the
+; `table` close that consumes `[`, or the open that consumes it where the
+; document begins with a header, begins a table's, an open that consumes
+; `[[` an array of tables', each open on a segment and `.` adds the
+; segment, and the open that consumes the last segment and `]`, or for an
+; array of tables the open that consumes the second `]`, applies it: the
+; open tables the new path does not continue end, innermost first, and the
+; segments past the ones it shares with them open, each a member and an
+; object, the last of an array of tables a member, an array and an object,
+; or, where the header names the open array of tables again, its next
+; element. A dotted key is read from the `dive` passes the same way, within
+; the table or the inline table that holds it: the segments before the
+; last open objects it shares with the dotted keys before it, and the last
+; names the member. A header or a dotted key that re-enters a table already
+; closed (`[a]` after `[b]` after `[a.c]`, or `a.d` after `e` after `a.b`)
+; writes its member again, which the tree contract after the part refuses,
+; and a host that reads a part then reads the document whole; a table
+; defined twice the grammar itself refuses.
+;
+; Two scans, since a step's outputs are one vector: the first yields each
+; event, a frame that opens as an [:open kind name] item, one that ends as
+; an [:end kind name] item and the next element of an array of tables as
+; [:next], and the second writes each item's events. The first's state is
+; [started marks frames pending]: whether any pass came (a source that
+; makes none, the empty document, is the empty object at finish); a mark
+; per open rule whose close will come, innermost last (:leaf for a val
+; that pushed nothing, :container for one that pushed a list or a map,
+; :array for a list, [:inline depth] for an inline table and [:body depth]
+; for a table's body, each with how many frames were open when it began,
+; and :skip for any other); a frame per open table (:table), array of
+; tables (:array-table, its array and its current element) and dotted
+; key's object (:dotted), outermost first, each [kind name]; and the header
+; or the dotted key being read, [:header kind segments] or [:key segments],
+; or missing. A rule replaced at its open (a header's or a dotted key's
+; segment, with `r:`) has no close pass, so it leaves no mark. Nothing
+; grows with the document's length, only with its nesting, under
+; max_metadata_bytes.
+
+def toml-transduce-replaced [rule]
+  match (get :alt rule)
+    case missing false
+    case alt
+      match (get :r alt)
+        case "" false
+        case _ true
+
+def toml-transduce-pushes [rule]
+  match (get :alt rule)
+    case missing ""
+    case alt (get :p alt)
+
+; The marks with one for a rule whose close pass will come: none for a
+; rule replaced at its open.
+def toml-transduce-mark [marks rule mark]
+  match (toml-transduce-replaced rule)
+    case true marks
+    case _ (push mark marks)
+
+; The name a key token gives a member: its value, a string, or the text
+; of what else the lexer read.
+def toml-transduce-name [token]
+  let [v (get :val token)]
+    match (kind v)
+      case :string v
+      case :null "null"
+      case :boolean (match v (case true "true") (case _ "false"))
+      case _ (scalar-text (record) v)
+
+; The indices of `items` from `from` on, and before `upto`.
+def toml-transduce-from [items from]
+  filter (fn [i] (match (compare i from) (case :less false) (case _ true))) (indices items)
+
+def toml-transduce-upto [items upto]
+  filter (fn [i] (match (compare i upto) (case :less true) (case _ false))) (indices items)
+
+; The items from index `from` on, and the items before index `upto`.
+def toml-transduce-slice [items from]
+  map (fn [i] (get-path (path i) items)) (toml-transduce-from items from)
+
+def toml-transduce-prefix [items upto]
+  map (fn [i] (get-path (path i) items)) (toml-transduce-upto items upto)
+
+; How many indices of `items` are past `i`: the index of item `i` from
+; the end.
+def toml-transduce-past [items i]
+  count (filter (fn [j] (match (compare j i) (case :greater true) (case _ false))) (indices items))
+
+; The items last first.
+def toml-transduce-reverse [items]
+  map (fn [i] (get-path (path (toml-transduce-past items i)) items)) (indices items)
+
+; The names of frames.
+def toml-transduce-names [frames]
+  map (fn [frame] (get-path (path 1) frame)) frames
+
+; Whether `a` and `b` differ at index `j`, `b` ending before it included.
+def toml-transduce-differ [a b j]
+  match (get-path (path j) b)
+    case missing true
+    case segment (if (equal segment (get-path (path j) a)) false true)
+
+; Whether `a` and `b` agree at every index up to `i`.
+def toml-transduce-agree [a b i]
+  match (count (filter (fn [j] (match (compare j i) (case :greater false) (case _ (toml-transduce-differ a b j)))) (indices a)))
+    case 0 true
+    case _ false
+
+; How many names two paths share at their head.
+def toml-transduce-common [a b]
+  count (filter (fn [i] (toml-transduce-agree a b i)) (indices a))
+
+; The items that end the frames from index `kept` on, innermost first.
+def toml-transduce-ends [frames kept]
+  map (fn [frame] (push-all frame [:end])) (toml-transduce-reverse (toml-transduce-slice frames kept))
+
+; The items that open frames.
+def toml-transduce-opens [frames]
+  map (fn [frame] (push-all frame [:open])) frames
+
+; The depth the current scope began at: that of the innermost inline table
+; or table body, whose dotted keys' frames are the ones above it.
+def toml-transduce-base [marks]
+  let [scopes (filter (fn [m] (match m (case [:inline d] true) (case [:body d] true) (case _ false))) marks)]
+    match (count scopes)
+      case 0 0
+      case _
+        match (top scopes)
+          case [scope d] d
+
+; The frames before `upto`, the ones from `kept` of `scope` on ended and
+; `opened` begun after the shared ones: what a header or a dotted key
+; leaves open, and the items that get there.
+def toml-transduce-rebase [state below scope kept opened pending]
+  match state
+    case [started marks frames old]
+      transition [started marks (push-all opened (push-all (toml-transduce-prefix scope kept) below)) pending] (push-all (toml-transduce-opens opened) (toml-transduce-ends scope kept))
+
+; A dotted key, within the current scope: the segments before the last
+; open the objects it shares with the dotted keys before it, and the last
+; names the member.
+def toml-transduce-dotted [state segs final]
+  match state
+    case [started marks frames pending]
+      let [base (toml-transduce-base marks)]
+        let [scope (toml-transduce-slice frames base)]
+          let [kept (toml-transduce-common (toml-transduce-names scope) segs)]
+            match (toml-transduce-rebase state (toml-transduce-prefix frames base) scope kept (map (fn [seg] [:dotted seg]) (toml-transduce-slice segs kept)) missing)
+              case (transition next outputs) (transition next (push (key final) outputs))
+
+; A plain key, within the current scope: the dotted keys' objects end, and
+; the key names its member.
+def toml-transduce-plain [state name]
+  match state
+    case [started marks frames pending]
+      let [base (toml-transduce-base marks)]
+        match (toml-transduce-rebase state (toml-transduce-prefix frames base) (toml-transduce-slice frames base) 0 [] pending)
+          case (transition next outputs) (transition next (push (key name) outputs))
+
+; Whether a header of an array of tables names the open one again: every
+; segment shared, and the last shared frame that array.
+def toml-transduce-again [frames segs kept]
+  match (equal kept (count segs))
+    case true
+      match (count (toml-transduce-prefix frames kept))
+        case 0 false
+        case _
+          match (top (toml-transduce-prefix frames kept))
+            case [:array-table name] true
+            case _ false
+    case _ false
+
+; The frames a header's unshared segments open: tables, and for an array
+; of tables' header the last an array of tables.
+def toml-transduce-header-frames [kind rest]
+  match kind
+    case :table (map (fn [seg] [:table seg]) rest)
+    case _
+      match (count rest)
+        case 0 []
+        case _
+          let [last (count (pop rest))]
+            map (fn [i] [(if (equal i last) :array-table :table) (get-path (path i) rest)]) (indices rest)
+
+; A header applies: the tables it does not continue end, and its unshared
+; segments open; an array of tables' header naming the open array again
+; begins its next element.
+def toml-transduce-header [state kind segs]
+  match state
+    case [started marks frames pending]
+      let [kept (toml-transduce-common (toml-transduce-names frames) segs)]
+        match [kind (toml-transduce-again frames segs kept)]
+          case [:array-table true]
+            match (toml-transduce-rebase state [] frames kept [] missing)
+              case (transition next outputs) (transition next (push [:next] outputs))
+          case _ (toml-transduce-rebase state [] frames kept (toml-transduce-header-frames kind (toml-transduce-slice segs kept)) missing)
+
+; The header being read with a segment added, begun as a table's where
+; none is.
+def toml-transduce-segment [pending seg]
+  match pending
+    case [:header kind segs] [:header kind (push seg segs)]
+    case _ [:header :table [seg]]
+
+; A table pass: a header's `[` (the first header's, which no table close
+; consumed) or `[[`, a segment, its end, or the body's start.
+def toml-transduce-table-open [state rule]
+  match state
+    case [started marks frames pending]
+      let [marked [started (toml-transduce-mark marks rule :skip) frames pending]]
+        match (transduce-token 0 rule)
+          case missing (transition marked [])
+          case first
+            match (get :name first)
+              case "#OS"
+                match (transduce-token 1 rule)
+                  case missing (transition [started (toml-transduce-mark marks rule :skip) frames [:header :table []]] [])
+                  case second (transition [started (toml-transduce-mark marks rule :skip) frames [:header :array-table []]] [])
+              case "#CS"
+                match pending
+                  case [:header kind segs] (toml-transduce-header marked kind segs)
+                  case _ (transition marked [])
+              case _
+                match (transduce-token 1 rule)
+                  case missing (transition marked [])
+                  case second
+                    match [(get :name second) (toml-transduce-pushes rule)]
+                      case ["#CS" "map"]
+                        match (toml-transduce-segment pending (toml-transduce-name first))
+                          case [:header kind segs] (toml-transduce-header marked kind segs)
+                      case _ (transition [started (toml-transduce-mark marks rule :skip) frames (toml-transduce-segment pending (toml-transduce-name first))] [])
+
+; A table's close: with `[` consumed, a table's header begins.
+def toml-transduce-table-close [state rule]
+  match state
+    case [started marks frames pending]
+      match (transduce-token 0 rule)
+        case missing (transition [started (pop marks) frames pending] [])
+        case token
+          match (get :name token)
+            case "#OS" (transition [started (pop marks) frames [:header :table []]] [])
+            case _ (transition [started (pop marks) frames pending] [])
+
+; A map: an inline table, opened on `{`, or a table's body, opened on
+; nothing, or on the end of the source where the last table is empty.
+def toml-transduce-map-open [state rule]
+  match state
+    case [started marks frames pending]
+      match (toml-transduce-token-name 0 rule)
+        case "#OB" (transition [started (toml-transduce-mark marks rule [:inline (count frames)]) frames pending] [object-start])
+        case _ (transition [started (toml-transduce-mark marks rule [:body (count frames)]) frames pending] [])
+
+; A map's close: the dotted keys' objects it holds end, and an inline
+; table's object with them.
+def toml-transduce-map-close [state]
+  match state
+    case [started marks frames pending]
+      match (top marks)
+        case [:inline d] (transition [started (pop marks) (toml-transduce-prefix frames d) pending] (push object-end (toml-transduce-ends frames d)))
+        case [:body d] (transition [started (pop marks) (toml-transduce-prefix frames d) pending] (toml-transduce-ends frames d))
+        case _ (transition [started (pop marks) frames pending] [])
+
+; A pair: its key and `=`, or the start of a dotted key.
+def toml-transduce-pair-open [state rule]
+  match state
+    case [started marks frames pending]
+      match (transduce-token 0 rule)
+        case missing (transition [started (toml-transduce-mark marks rule :skip) frames [:key []]] [])
+        case token (toml-transduce-plain [started (toml-transduce-mark marks rule :skip) frames pending] (toml-transduce-name token))
+
+; A dive: a dotted key's segment, or its last segment and `=`.
+def toml-transduce-dive-open [state rule]
+  match state
+    case [started marks frames pending]
+      match (transduce-token 0 rule)
+        case missing (transition [started (toml-transduce-mark marks rule :skip) frames pending] [])
+        case first
+          match (toml-transduce-token-name 1 rule)
+            case "#DOT"
+              match pending
+                case [:key segs] (transition [started (toml-transduce-mark marks rule :skip) frames [:key (push (toml-transduce-name first) segs)]] [])
+                case _ (transition [started (toml-transduce-mark marks rule :skip) frames [:key [(toml-transduce-name first)]]] [])
+            case _
+              match pending
+                case [:key segs] (toml-transduce-dotted [started (toml-transduce-mark marks rule :skip) frames pending] segs (toml-transduce-name first))
+                case _ (toml-transduce-dotted [started (toml-transduce-mark marks rule :skip) frames pending] [] (toml-transduce-name first))
+
+def toml-transduce-token-name [n rule]
+  match (transduce-token n rule)
+    case missing ""
+    case token (get :name token)
+
+; A val: a leaf, or a container another rule opens.
+def toml-transduce-val-open [state rule]
+  match state
+    case [started marks frames pending]
+      match (toml-transduce-pushes rule)
+        case "" (transition [started (toml-transduce-mark marks rule :leaf) frames pending] [])
+        case _ (transition [started (toml-transduce-mark marks rule :container) frames pending] [])
+
+; A val's close: a leaf's scalar, from the value the close carries.
+def toml-transduce-val-close [state rule]
+  match state
+    case [started marks frames pending]
+      match (top marks)
+        case :leaf
+          match (get :value rule)
+            case missing (fail :unstreamable "a value the passes do not carry")
+            case value (transition [started (pop marks) frames pending] [(scalar value)])
+        case _ (transition [started (pop marks) frames pending] [])
+
+def toml-transduce-open [state rule]
+  match state
+    case [started marks frames pending]
+      match (get :name rule)
+        case "toml" (transition [true (toml-transduce-mark marks rule :skip) frames pending] [object-start])
+        case "table" (toml-transduce-table-open state rule)
+        case "map" (toml-transduce-map-open state rule)
+        case "pair" (toml-transduce-pair-open state rule)
+        case "dive" (toml-transduce-dive-open state rule)
+        case "val" (toml-transduce-val-open state rule)
+        case "list" (transition [started (toml-transduce-mark marks rule :array) frames pending] [array-start])
+        case _ (transition [started (toml-transduce-mark marks rule :skip) frames pending] [])
+
+def toml-transduce-close [state rule]
+  match state
+    case [started marks frames pending]
+      match (get :name rule)
+        case "toml" (transition [started (pop marks) [] pending] (push object-end (toml-transduce-ends frames 0)))
+        case "table" (toml-transduce-table-close state rule)
+        case "map" (toml-transduce-map-close state)
+        case "val" (toml-transduce-val-close state rule)
+        case "list" (transition [started (pop marks) frames pending] [array-end])
+        case _ (transition [started (pop marks) frames pending] [])
+
+def toml-transduce-step [state pass]
+  match pass
+    case (open rule) (toml-transduce-open state rule)
+    case (close rule) (toml-transduce-close state rule)
+
+; A source that made no pass is the empty object.
+def toml-transduce-finish [state]
+  match state
+    case [false marks frames pending] [object-start object-end]
+    case _ []
+
+; Each item of the first scan as its events: a frame opened or ended, the
+; next element of an array of tables, or an event as it is.
+def toml-transduce-expand [state item]
+  match (kind item)
+    case :vector
+      match item
+        case [:open :array-table name] (transition state [(key name) array-start object-start])
+        case [:open frame name] (transition state [(key name) object-start])
+        case [:end :array-table name] (transition state [object-end array-end])
+        case [:end frame name] (transition state [object-end])
+        case [:next] (transition state [object-end object-start])
+    case _ (transition state [item])
+
+def toml-transduce-flush [state]
+  []
+
+def toml-transduce [input]
+  as-events (scan-emit [] toml-transduce-expand toml-transduce-flush (scan-emit [false [] [] missing] toml-transduce-step toml-transduce-finish (parser-events input)))
