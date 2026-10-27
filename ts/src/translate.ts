@@ -414,9 +414,11 @@ def toml-render [input]
 ; defined twice the grammar itself refuses.
 ;
 ; Two scans, since a step's outputs are one vector: the first yields each
-; event, a frame that opens as an [:open kind name] item, one that ends as
-; an [:end kind name] item and the next element of an array of tables as
-; [:next], and the second writes each item's events. The first's state is
+; event, a frame that opens as an [:open kind name] item, the frames that
+; end as an [:ending frames] item and an [:end] per frame, and the next
+; element of an array of tables as [:next], and the second writes each
+; item's events, holding the frames to end and taking one off their end,
+; the innermost, per [:end]. The first's state is
 ; [started marks frames pending]: whether any pass came (a source that
 ; makes none, the empty document, is the empty object at finish); a mark
 ; per open rule whose close will come, innermost last (:leaf for a val
@@ -476,15 +478,6 @@ def toml-transduce-slice [items from]
 def toml-transduce-prefix [items upto]
   map (fn [i] (get-path (path i) items)) (toml-transduce-upto items upto)
 
-; How many indices of \`items\` are past \`i\`: the index of item \`i\` from
-; the end.
-def toml-transduce-past [items i]
-  count (filter (fn [j] (match (compare j i) (case :greater true) (case _ false))) (indices items))
-
-; The items last first.
-def toml-transduce-reverse [items]
-  map (fn [i] (get-path (path (toml-transduce-past items i)) items)) (indices items)
-
 ; The names of frames.
 def toml-transduce-names [frames]
   map (fn [frame] (get-path (path 1) frame)) frames
@@ -495,19 +488,21 @@ def toml-transduce-differ [a b j]
     case missing true
     case segment (if (equal segment (get-path (path j) a)) false true)
 
-; Whether \`a\` and \`b\` agree at every index up to \`i\`.
-def toml-transduce-agree [a b i]
-  match (count (filter (fn [j] (match (compare j i) (case :greater false) (case _ (toml-transduce-differ a b j)))) (indices a)))
-    case 0 true
-    case _ false
-
-; How many names two paths share at their head.
+; How many names two paths share at their head: the first index they
+; differ at, or every one of \`a\`, found in one pass over \`a\`.
 def toml-transduce-common [a b]
-  count (filter (fn [i] (toml-transduce-agree a b i)) (indices a))
+  let [differing (filter (fn [i] (toml-transduce-differ a b i)) (indices a))]
+    match (count differing)
+      case 0 (count a)
+      case _ (get-path (path 0) differing)
 
-; The items that end the frames from index \`kept\` on, innermost first.
+; The items that end the frames from index \`kept\` on: the frames, as one
+; [:ending frames] item, then an [:end] per frame, which the second scan
+; takes innermost first off the frames it holds, so the ends cost a step
+; per frame whatever their number.
 def toml-transduce-ends [frames kept]
-  map (fn [frame] (push-all frame [:end])) (toml-transduce-reverse (toml-transduce-slice frames kept))
+  let [ended (toml-transduce-slice frames kept)]
+    push-all (map (fn [frame] [:end]) ended) [[:ending ended]]
 
 ; The items that open frames.
 def toml-transduce-opens [frames]
@@ -739,16 +734,21 @@ def toml-transduce-finish [state]
     case [false marks frames pending] [object-start object-end]
     case _ []
 
-; Each item of the first scan as its events: a frame opened or ended, the
-; next element of an array of tables, or an event as it is.
+; Each item of the first scan as its events: a frame opened; the frames to
+; end, held as the state, outermost first; one of them ended, the innermost
+; held, whose object ends, and whose array with it for an array of tables;
+; the next element of an array of tables; or an event as it is.
 def toml-transduce-expand [state item]
   match (kind item)
     case :vector
       match item
         case [:open :array-table name] (transition state [(key name) array-start object-start])
         case [:open frame name] (transition state [(key name) object-start])
-        case [:end :array-table name] (transition state [object-end array-end])
-        case [:end frame name] (transition state [object-end])
+        case [:ending frames] (transition frames [])
+        case [:end]
+          match (top state)
+            case [:array-table name] (transition (pop state) [object-end array-end])
+            case _ (transition (pop state) [object-end])
         case [:next] (transition state [object-end object-start])
     case _ (transition state [item])
 
