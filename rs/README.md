@@ -52,8 +52,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+The instance `make` builds also turns on the engine's `lex.window` option,
+so its `parse_reader` reads the source a window at a time, where a parser
+without the option reads all of the source first. The value and any error
+match a parse of the same text. The one difference is the excerpt an error
+shows of a very long line, which starts where the window starts.
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let parser = tabnas_toml::make();
+    let value = parser.parse_reader("[owner]\nname = \"Tom\"\n".as_bytes())?;
+    assert_eq!(value.to_string(), r#"{"owner":{"name":"Tom"}}"#);
+    Ok(())
+}
+```
+
 To layer TOML on an instance of your own, install the plugin, or call the
-grammar function directly:
+grammar function directly. Neither turns on the window option, since a host
+may add matchers of its own:
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {

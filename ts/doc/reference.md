@@ -17,12 +17,13 @@ Published as `@tabnas/toml`. Runtime peer dependencies:
 ## Exports
 
 ```ts
-import { Toml, VERSION, type TomlOptions } from '@tabnas/toml'
+import { Toml, make, VERSION, type TomlOptions } from '@tabnas/toml'
 ```
 
 | Export        | Kind                      | Description                                              |
 | ------------- | ------------------------- | ------------------------------------------------------- |
 | `Toml`        | `Plugin` (from `@tabnas/parser`) | Installs the TOML grammar onto a `Tabnas` instance. |
+| `make`        | function                  | Builds a whole TOML parser that reads a reader a window at a time. |
 | `VERSION`     | `string`                  | This package's version. Always equals `package.json` `"version"`; a test enforces it. |
 | `TomlOptions` | type                      | Plugin options object. Currently `{}` (no options).     |
 
@@ -49,6 +50,33 @@ const result = toml.parse(src)
   header.
 - On a syntax error `.parse` throws; the thrown error has a `code`
   property (for example `'unexpected'`) and a formatted multi-line `message`.
+
+## Parsing from a reader
+
+`make(options?)` builds the same parser as `new Tabnas().use(jsonic).use(Toml)`
+and turns on the engine's `lex.window` option. Its `parseReader` then reads
+the source a window at a time, where a parser without the option reads all
+of the source first. The value and any error match a parse of the same text
+with `.parse`. The one difference is the excerpt an error shows of a very
+long line, which starts where the window starts. The plugin alone leaves the
+option off, so a host that adds matchers of its own can decide for itself.
+
+```js
+const { make } = require('@tabnas/toml')
+
+const bytes = Buffer.from('[owner]\nname = "Tom"\n', 'utf8')
+let at = 0
+const reader = {
+  read(buf) {
+    const n = Math.min(buf.length, bytes.length - at)
+    buf.set(bytes.subarray(at, at + n))
+    at += n
+    return n
+  },
+}
+
+make().parseReader(reader)   // => { owner: { name: 'Tom' } }
+```
 
 ## Options
 

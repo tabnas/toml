@@ -63,6 +63,12 @@ Builds and returns a `*tabnas.Tabnas` with the TOML grammar applied. Use
 it to keep a parser around across many calls, or to hand to code that
 expects a `*tabnas.Tabnas`. Call `.Parse(src)` on the returned instance.
 
+The instance also turns on the engine's `lex.window` option, so its
+`ParseReader` reads the source a window at a time, where a parser without
+the option reads all of the source first. The value and any error match a
+parse of the same text with `.Parse`. The one difference is the excerpt an
+error shows of a very long line, which starts where the window starts.
+
 ## `TomlTime`
 
 ```go

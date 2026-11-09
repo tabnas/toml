@@ -107,7 +107,15 @@ fn toml_string_matcher(
     // Look before copying anything. The engine consults this matcher at
     // nearly every token, and copying the rest of the source on each call
     // made a parse quadratic in its length: 4,000 tables took 23 seconds.
-    let delimiter = lexer.remaining().chars().next()?;
+    //
+    // In a parse from a reader a window at a time (`lex.window`, admin
+    // ADR-30) the lexer holds a window of the source, and its calls read
+    // no further than the window's end: each read here first fills the
+    // window as far as it looks (`Lexer::fill`), so that `forward` answers
+    // fewer characters than it was asked for only at the source's end, as
+    // [`Window::new`] takes it to.
+    lexer.fill(1);
+    let delimiter = lexer.window().chars().next()?;
     if '\'' != delimiter && '"' != delimiter {
         return None;
     }
@@ -116,6 +124,7 @@ fn toml_string_matcher(
     let origin = lexer.point().site.pos;
     let mut want = FIRST_WINDOW;
     loop {
+        lexer.fill(want);
         let window = Window::new(lexer.forward(want), want);
         let scanned = scan(&window, delimiter, origin);
         if window.short.get() {
@@ -139,7 +148,9 @@ fn toml_string_matcher(
 /// The source from the cursor on, as far as a scan has needed it: all of
 /// the rest of it when `whole`, else a prefix. Reading past the end of a
 /// prefix marks the window `short`, and the scan is then repeated over a
-/// longer one, so every answer is the one the whole source gives.
+/// longer one, so every answer is the one the whole source gives. (This
+/// prefix is the scan's own; in a parse from a reader it lies inside the
+/// lexer's window, which `toml_string_matcher` fills first.)
 struct Window {
     chars: Vec<char>,
     whole: bool,
@@ -149,7 +160,8 @@ struct Window {
 impl Window {
     fn new(text: &str, want: usize) -> Window {
         let chars: Vec<char> = text.chars().collect();
-        // `forward` answers fewer than `want` only at the end of source.
+        // `forward` answers fewer than `want` only at the end of source,
+        // once the lexer's window has been filled that far.
         let whole = chars.len() < want;
         Window {
             chars,

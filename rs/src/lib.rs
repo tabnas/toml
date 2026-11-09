@@ -727,8 +727,9 @@ pub fn plugin() -> Plugin {
 }
 
 /// Build a TOML parser: a jsonic instance with this plugin installed, the
-/// counterpart of `new Tabnas().use(jsonic).use(Toml)` and the Go
-/// `MakeJsonic()`.
+/// counterpart of the TypeScript `make()` and the Go `MakeJsonic()`, with
+/// `lex.window` declared, so that [`Tabnas::parse_reader`] reads a reader a
+/// window at a time rather than whole (admin ADR-30).
 ///
 /// ```
 /// fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -749,6 +750,17 @@ pub fn make_with(_options: TomlOptions) -> Tabnas {
     parser
         .use_plugin(plugin(), None)
         .expect("the toml grammar document is fixed and valid");
+    // The plugin's own matchers, its strings, its dates and times and the
+    // leading byte order mark, read the source through the lexer's window
+    // and fill it where a scan reaches its end; jsonic's base reads through
+    // it too (jsonic 0.7.11); and no action reads the source. So a parse
+    // from a reader may hold a window of the source rather than all of it
+    // (`Tabnas::parse_reader`). Set on the parser this crate makes whole,
+    // not in [`toml`] or [`plugin`], which a host may install beneath
+    // matchers of its own.
+    parser
+        .set_options(|options| options.lex.window = true)
+        .expect("lex.window sets");
     parser
 }
 

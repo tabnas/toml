@@ -63,10 +63,7 @@ func makeDateMatcher(
 ) tabnas.LexMatcher {
 	return func(lex *tabnas.Lex, rule *tabnas.Rule) *tabnas.Token {
 		pnt := lex.Cursor()
-		if pnt.SI >= len(lex.Src) {
-			return nil
-		}
-		m := re.FindStringSubmatch(lex.Src[pnt.SI:])
+		m := matchAhead(lex, re)
 		if m == nil {
 			return nil
 		}
@@ -88,6 +85,48 @@ func makeDateMatcher(
 		pnt.SI += mlen
 		pnt.CI += mlen
 		return tkn
+	}
+}
+
+// How far the date and time patterns read, in bytes. Each fails, when it
+// fails, within its first dateLeast bytes (`yyyy-mm-dd` for a date, `hh:mm`
+// for a time), and reads at most dateReach bytes past what it matches: an
+// optional part is given up no later than its sixth byte, as a `+hh:mm`
+// offset whose last digit is missing is. The run of fraction digits is the
+// only part with no bound, and it ends within the match. Every character a
+// pattern matches or reads on to is ASCII until one that is not ends the
+// read, and a window holds whole characters, so a window that holds the
+// bound's bytes holds every character the pattern reads.
+const (
+	dateLeast = 10
+	dateReach = 6
+)
+
+// matchAhead returns what re matches at the cursor, as the whole text gives
+// it. In a parse from a reader a window at a time (lex.window, admin
+// ADR-30) the text after the cursor is the window's, which may end inside a
+// date, so that a shorter match, or none, would stand where the whole text
+// has a longer one: `1979-05-27T07:3` matches as a date alone. The window
+// is read on, twice as far each time, until what the pattern read lies
+// inside it or the source has ended. A whole text is all read, and its
+// first match stands.
+func matchAhead(lex *tabnas.Lex, re *regexp.Regexp) []string {
+	// Enough for `yyyy-mm-ddThh:mm:ss+hh:mm` and what is read past it.
+	ahead := 32
+	for {
+		more := lex.Fill(ahead)
+		m := re.FindStringSubmatch(lex.Window())
+		if !lex.Windowed() || !more {
+			return m
+		}
+		reads := dateLeast
+		if m != nil {
+			reads = len(m[0]) + dateReach
+		}
+		if reads <= ahead {
+			return m
+		}
+		ahead = max(2*ahead, reads)
 	}
 }
 
