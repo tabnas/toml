@@ -125,7 +125,7 @@ fn body_conflict(rule: &Rule, context: &mut Context, key: &str) -> Result<(), Ac
     };
     let path = snapshot_path(Some(&table));
     match existing_at(context, &table.node, path, key) {
-        Some(existing) => Err(redefined(key, &existing)),
+        Some(_) => Err(redefined(key)),
         None => Ok(()),
     }
 }
@@ -255,8 +255,8 @@ fn register_state_actions(parser: &mut Tabnas) {
         };
         let value = child.node.borrow().clone();
         let key = key_of(rule, context);
-        if let Some(existing) = existing_at(context, &cell_of(rule), path_of(rule), &key) {
-            return Err(redefined(&key, &existing));
+        if existing_at(context, &cell_of(rule), path_of(rule), &key).is_some() {
+            return Err(redefined(&key));
         }
         write_at(context, &cell_of(rule), path_of(rule), key, value);
         Ok(())
@@ -272,8 +272,8 @@ fn register_state_actions(parser: &mut Tabnas) {
             return Ok(());
         }
         let key = key_of(rule, context);
-        if let Some(existing) = existing_at(context, &cell_of(rule), Path::ROOT, &key) {
-            return Err(redefined(&key, &existing));
+        if existing_at(context, &cell_of(rule), Path::ROOT, &key).is_some() {
+            return Err(redefined(&key));
         }
         body_conflict(rule, context, &key)
     });
@@ -354,15 +354,8 @@ fn register_alt_actions(parser: &mut Tabnas) {
             // produced by `@table-key-cs-head`, so reaching a non-array
             // here means the key conflicts.
             let key = key_of(rule, context);
-            let existing = cursor.value();
             cursor.finish(context, &cell);
-            return Err(ActionError::new(
-                "toml_key_conflict",
-                format!(
-                    "cannot define {key}, it already has the value {}",
-                    existing.to_json()
-                ),
-            ));
+            return Err(redefined(&key));
         }
         cursor.push_table(context);
         set_path(rule, cursor.path());

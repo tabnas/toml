@@ -195,6 +195,14 @@ const grammarText = `
 // already do.
 const node = () => Object.create(null)
 
+// What a key conflict says the key already is. It names the key and says
+// it is already defined, and never quotes the earlier value: that value is
+// in the tree the parse builds, which a host streaming the document may
+// empty behind the stream (transduce's ParserEventSource.prune), so a
+// message quoting it would depend on whether the tree was pruned. The same
+// words in every runtime.
+const ALREADY_DEFINED = 'it is already defined'
+
 // The last table of an array-of-tables, or a DIAGNOSED refusal to append to
 // something that is not an array. `[[a]]` after `a = 1` raised
 // "r.prev.node.push is not a function" — the same crash class as tableAt's,
@@ -207,7 +215,7 @@ function arrayAt(container: any, key: string, r: any, ctx: any): any[] {
 
   throw new JsonicError(
     'toml_key_conflict',
-    { key, why: `it already has the value ${JSON.stringify(existing)}` },
+    { key, why: ALREADY_DEFINED },
     r.o0, r, ctx)
 }
 
@@ -262,7 +270,7 @@ function redefines(container: any, key: string, r: any, ctx: any): void {
     'toml_key_conflict',
     {
       key,
-      why: `it already has the value ${JSON.stringify(existing)}`,
+      why: ALREADY_DEFINED,
     },
     r.o0, r, ctx)
 }
@@ -338,7 +346,7 @@ function tableAt(
 
     throw new JsonicError(
       'toml_key_conflict',
-      { key, why: 'it is already defined' },
+      { key, why: ALREADY_DEFINED },
       r.o0, r, ctx)
   }
 
@@ -346,7 +354,7 @@ function tableAt(
     'toml_key_conflict',
     {
       key,
-      why: `it already has the value ${JSON.stringify(existing)}`,
+      why: ALREADY_DEFINED,
     },
     r.o0, r, ctx)
 }
@@ -654,7 +662,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
           'toml_key_conflict',
           {
             key: r.o0 ? r.o0.val : '',
-            why: `it already has the value ${JSON.stringify(r.prev.node)}`,
+            why: ALREADY_DEFINED,
           },
           ctx.t0, r, ctx)
       }

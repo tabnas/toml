@@ -3,7 +3,6 @@
 package tabnastoml
 
 import (
-	"encoding/json"
 	"fmt"
 
 	tabnas "github.com/tabnas/parser/go"
@@ -203,7 +202,7 @@ func makeRefs() map[tabnas.FuncRef]any {
 				// `[[a]]` where `a` is already a scalar. The array itself
 				// is produced by arrayAt above, so reaching a non-array
 				// here means the key conflicts.
-				keyConflict(ctx, tokenString(r.O0), describe(r.Prev.Node))
+				keyConflict(ctx, tokenString(r.O0), alreadyDefined)
 			}
 			newM := newMap()
 			arr = append(arr, newM)
@@ -398,15 +397,12 @@ func keyConflictAt(tkn *tabnas.Token, key, why string) {
 	})
 }
 
-// describe says what a key already holds, in the canonical port's words:
-// `it already has the value ${JSON.stringify(existing)}`.
-func describe(existing any) string {
-	raw, err := json.Marshal(existing)
-	if err != nil {
-		return fmt.Sprintf("it already has the value %v", existing)
-	}
-	return "it already has the value " + string(raw)
-}
+// alreadyDefined is what a key conflict says the key already is, in the
+// canonical port's words. It names no earlier value: that value is in the
+// tree the parse builds, which a host streaming the document may empty
+// behind the stream (transduce's ParserEventSource.Prune), so a message
+// quoting it would depend on whether the tree was pruned.
+const alreadyDefined = "it is already defined"
 
 // valueAt is the value under key, or nil when the table has none.
 func valueAt(container *tabnas.OrderedMap, key string) any {
@@ -421,7 +417,7 @@ func valueAt(container *tabnas.OrderedMap, key string) any {
 // where the reader looks.
 func redefines(container *tabnas.OrderedMap, key string, at *tabnas.Token) {
 	if existing := valueAt(container, key); existing != nil {
-		keyConflictAt(at, key, describe(existing))
+		keyConflictAt(at, key, alreadyDefined)
 	}
 }
 
@@ -482,9 +478,9 @@ func tableAt(container *tabnas.OrderedMap, key string, ctx *tabnas.Context, how 
 			delete(set, m)
 			return m
 		}
-		keyConflict(ctx, key, "it is already defined")
+		keyConflict(ctx, key, alreadyDefined)
 	}
-	keyConflict(ctx, key, describe(existing))
+	keyConflict(ctx, key, alreadyDefined)
 	return nil
 }
 
@@ -532,7 +528,7 @@ func arrayAt(container *tabnas.OrderedMap, key string, ctx *tabnas.Context) []an
 		container.Set(key, arr)
 		return arr
 	}
-	keyConflict(ctx, key, describe(existing))
+	keyConflict(ctx, key, alreadyDefined)
 	return nil
 }
 

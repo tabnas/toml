@@ -277,7 +277,7 @@ fn a_long_dotted_header_builds_every_table_it_names() {
         assert!(
             error
                 .to_string()
-                .contains("cannot define x, it already has the value 1"),
+                .contains("cannot define x, it is already defined"),
             "{error}"
         );
     })
@@ -428,7 +428,7 @@ fn a_long_dotted_key_builds_every_table_it_names() {
         assert_eq!("toml_key_conflict", error.code);
         assert!(
             error.to_string().contains(&format!(
-                "cannot define k{}, it already has the value 1",
+                "cannot define k{}, it is already defined",
                 DEPTH - 1
             )),
             "{error}"
