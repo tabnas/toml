@@ -86,6 +86,46 @@ fn groups(found: &regex::Captures<'_>) -> Vec<String> {
         .collect()
 }
 
+/// How far the date and time patterns read, in characters. Each fails,
+/// when it fails, within its first `DATE_LEAST` characters (`yyyy-mm-dd`
+/// for a date, `hh:mm` for a time), and reads at most `DATE_REACH`
+/// characters past what it matches: an optional part is given up no later
+/// than its sixth character, as a `+hh:mm` offset whose last digit is
+/// missing is. The run of fraction digits is the only part with no bound,
+/// and it ends within the match.
+const DATE_LEAST: usize = 10;
+const DATE_REACH: usize = 6;
+
+/// The captures of `pattern` at the cursor, as the whole text gives them.
+///
+/// In a parse from a reader a window at a time (`lex.window`, admin
+/// ADR-30) the text after the cursor is the window's, which may end
+/// inside a date, so that a shorter match, or none, would stand where the
+/// whole text has a longer one: `1979-05-27T07:3` matches as a date alone.
+/// The window is read on, twice as far each time, until what the pattern
+/// read lies inside it or the source has ended. A whole text is all read,
+/// and its first match stands.
+fn captures_ahead(pattern: &Regex, lexer: &mut Lexer<'_>) -> Option<Vec<String>> {
+    // Enough for `yyyy-mm-ddThh:mm:ss+hh:mm` and what is read past it.
+    let mut ahead = 32;
+    loop {
+        let more = lexer.fill(ahead);
+        // The captures borrow the window, which borrows the lexer; copy
+        // them out before anything asks the lexer for a token identity.
+        let captured = pattern.captures(lexer.window()).map(|found| groups(&found));
+        if !lexer.windowed() || !more {
+            return captured;
+        }
+        let reads = captured
+            .as_ref()
+            .map_or(DATE_LEAST, |groups| groups[0].chars().count() + DATE_REACH);
+        if reads <= ahead {
+            return captured;
+        }
+        ahead = ahead.saturating_mul(2).max(reads);
+    }
+}
+
 fn date_matcher(
     pattern: &'static Regex,
     in_range: fn(&str) -> bool,
@@ -94,11 +134,7 @@ fn date_matcher(
     rule: &mut Rule,
 ) -> Option<Token> {
     let point = lexer.point();
-    // The captures borrow the remaining source, which borrows the lexer;
-    // copy them out before anything asks the lexer for a token identity.
-    let captured = pattern
-        .captures(lexer.remaining())
-        .map(|found| groups(&found))?;
+    let captured = captures_ahead(pattern, lexer)?;
     let matched = captured.first().cloned().unwrap_or_default();
     if matched.is_empty() {
         return None;
@@ -170,13 +206,19 @@ const BOM: char = '\u{feff}';
 /// parser (BurntSushi/toml-test `valid/utf8-bom-01`, `-02`). The token is
 /// a `#SP`, which is in the IGNORE set, so the parser never sees it.
 /// Restricted to scalar position 0, so a BOM anywhere else stays an error.
+/// The position is the source's in a parse from a reader too, and the
+/// mark is read through the lexer's window (`lex.window`, admin ADR-30).
 pub(crate) fn bom_matcher(
     lexer: &mut Lexer<'_>,
     _rule: &mut Rule,
     _context: &mut Context,
 ) -> Option<Token> {
     let point = lexer.point();
-    if 0 != point.site.pos || !lexer.source().starts_with(BOM) {
+    if 0 != point.site.pos {
+        return None;
+    }
+    lexer.fill(1);
+    if !lexer.window().starts_with(BOM) {
         return None;
     }
     let token = lexer.token("#SP", TIN_SP, Value::Undefined, BOM.to_string(), point);

@@ -453,6 +453,46 @@ function localtimeInRange(text: string): boolean {
   return timeInRange(+p[1], +p[2], null == p[3] ? 0 : +p[3])
 }
 
+// The date and time shapes the context-aware matchers recognise, the same
+// ones the grammar's regex value matchers do.
+const ISODATE_RE =
+  /^\d\d\d\d-\d\d-\d\d([Tt ]\d\d:\d\d(:\d\d(\.\d+)?)?([Zz]|[-+]\d\d:\d\d)?)?/
+const LOCALTIME_RE = /^\d\d:\d\d(:\d\d(\.\d+)?)?/
+
+// How far those shapes read. Each fails, when it fails, within its first
+// DATE_LEAST characters (`yyyy-mm-dd` for a date, `hh:mm` for a time), and
+// reads at most DATE_REACH characters past what it matches: an optional
+// part is given up no later than its sixth character, as a `+hh:mm` offset
+// whose last digit is missing is. The run of fraction digits is the only
+// part with no bound, and it ends within the match.
+const DATE_LEAST = 10
+const DATE_REACH = 6
+
+// What `re` matches at the cursor, as the whole text gives it. In a parse
+// from a reader a window at a time (`lex.window`, admin ADR-30) the text
+// after the cursor is the window's, which may end inside a date, so that a
+// shorter match, or none, would stand where the whole text has a longer
+// one: `1979-05-27T07:3` matches as a date alone. The window is read on,
+// twice as far each time, until what the pattern read lies inside it or
+// the source has ended. A whole text is all read, and its first match
+// stands.
+function matchAhead(lex: Lex, re: RegExp): RegExpMatchArray | null {
+  // Enough for `yyyy-mm-ddThh:mm:ss+hh:mm` and what is read past it.
+  let ahead = 32
+  for (;;) {
+    lex.fill(ahead)
+    const m = lex.window().match(re)
+    if (!lex.windowOpen) {
+      return m
+    }
+    const reads = null == m ? DATE_LEAST : m[0].length + DATE_REACH
+    if (reads <= ahead) {
+      return m
+    }
+    ahead = Math.max(2 * ahead, reads)
+  }
+}
+
 
 const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
   // Human descriptions for TOML tokens, surfaced in railroad diagram legends
@@ -506,9 +546,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
     // matcher before the #ID token matcher ever gets a chance.
     '@isodate-match': (lex: Lex, rule: any) => {
       if (isKeyContext(lex, rule)) return null
-      const m = lex.fwd.match(
-        /^\d\d\d\d-\d\d-\d\d([Tt ]\d\d:\d\d(:\d\d(\.\d+)?)?([Zz]|[-+]\d\d:\d\d)?)?/,
-      )
+      const m = matchAhead(lex, ISODATE_RE)
       if (!m) return null
       const pnt = lex.pnt
       if (!isodateInRange(m[0])) {
@@ -530,7 +568,7 @@ const Toml: Plugin = (tn: Tabnas, _options: TomlOptions) => {
 
     '@localtime-match': (lex: Lex, rule: any) => {
       if (isKeyContext(lex, rule)) return null
-      const m = lex.fwd.match(/^\d\d:\d\d(:\d\d(\.\d+)?)?/)
+      const m = matchAhead(lex, LOCALTIME_RE)
       if (!m) return null
       const pnt = lex.pnt
       if (!localtimeInRange(m[0])) {
@@ -791,10 +829,20 @@ const BOM = '\uFEFF'
 
 // Lex matcher factory for the leading BOM. Emits a zero-value #SP token
 // (#SP is in the IGNORE token set, so the parser never sees it).
+//
+// Only the source's own start may hold the mark. In a parse from a reader a
+// window at a time (`lex.window`, admin ADR-30) the cursor counts from the
+// window's start, which begins `lengthRead() - src.length` units into the
+// source (none in a parse of the whole text), so a cursor at the window's
+// start is at the source's only when that is none.
 function makeBomMatcher() {
   return function bomMatcher(lex: Lex) {
     const pnt = lex.pnt
-    if (0 !== pnt.sI || BOM !== lex.src[0]) {
+    if (0 !== lex.lengthRead() - lex.src.length + pnt.sI) {
+      return undefined
+    }
+    lex.fill(1)
+    if (BOM !== lex.src[pnt.sI]) {
       return undefined
     }
     const tkn = lex.token('#SP', undefined, BOM, pnt)
@@ -832,10 +880,26 @@ function makeTomlStringMatcher() {
     let { sI, rI, cI } = pnt
     let srclen = src.length
 
+    // The character at `i`. In a parse from a reader a window at a time
+    // (`lex.window`, admin ADR-30) `src` is the window's text and `sI`
+    // counts from the window's start, and a string may run past the
+    // window's end: a read there reads the source on (`fill`) before it
+    // answers, so the scan sees what the whole text holds, and answers
+    // undefined only past the source's end, as a whole text does. Every
+    // read of the scan goes through here.
+    const at = (i: number): string => {
+      if (srclen <= i) {
+        lex.fill(i - pnt.sI + 1)
+        src = lex.src
+        srclen = src.length
+      }
+      return src[i]
+    }
+
     let isMultiline = false
     let begin = sI
 
-    let delimiter = src[sI]
+    let delimiter = at(sI)
     let singleQuote = "'" === delimiter
     let doubleQuote = '"' === delimiter
 
@@ -843,8 +907,8 @@ function makeTomlStringMatcher() {
       return
     }
 
-    if (delimiter === src[sI + 1]) {
-      if (delimiter !== src[sI + 2]) {
+    if (delimiter === at(sI + 1)) {
+      if (delimiter !== at(sI + 2)) {
         pnt.sI = sI + 2
         pnt.cI = cI + 2
         // The empty string's token carries its two quote characters as its
@@ -873,7 +937,7 @@ function makeTomlStringMatcher() {
     // it (tabnas/toml#85). The line feed a line-ending backslash trims,
     // below, was consumed the same way.
     if (isMultiline) {
-      if ('\n' === src[sI + 1]) {
+      if ('\n' === at(sI + 1)) {
         ++sI
         ++rI
         cI = 0
@@ -891,11 +955,14 @@ function makeTomlStringMatcher() {
     // `sI < srclen`, not `srclen - 1`. The old bound stopped one character
     // short, so a string whose closing delimiter is the final character of the
     // source was never examined, and `case undefined` below was unreachable.
+    // In a window, `srclen` is the window's length, which every read below
+    // grows (`at`) before the scan reaches it, so the loop ends where the
+    // whole text's does.
     for (; sI < srclen; ) {
       ++sI
       ++cI
 
-      const char = src[sI]
+      const char = at(sI)
 
       switch (char) {
         case '\n':
@@ -910,12 +977,12 @@ function makeTomlStringMatcher() {
 
         case delimiter:
           if (isMultiline) {
-            if (delimiter !== src[sI + 1]) {
+            if (delimiter !== at(sI + 1)) {
               value += delimiter
               continue
             }
 
-            if (delimiter !== src[sI + 2]) {
+            if (delimiter !== at(sI + 2)) {
               value += delimiter
               value += delimiter
               cI += 1
@@ -928,13 +995,13 @@ function makeTomlStringMatcher() {
 
             // Up to two further delimiters belong to the value, and each is
             // a column of the source as well as a character of the value.
-            if (delimiter === src[sI + 1]) {
+            if (delimiter === at(sI + 1)) {
               value += delimiter
               sI++
               cI++
             }
 
-            if (delimiter === src[sI + 1]) {
+            if (delimiter === at(sI + 1)) {
               value += delimiter
               sI++
               cI++
@@ -970,7 +1037,7 @@ function makeTomlStringMatcher() {
 
             case '"':
               if (char === '\\') {
-                const char = src[(++cI, ++sI)]
+                const char = at((++cI, ++sI))
 
                 if (isEscaped(char)) {
                   value += ESCAPES[char]
@@ -985,7 +1052,9 @@ function makeTomlStringMatcher() {
                   // then surfaced as unterminated_string rather than a bad
                   // escape. Go's strconv.ParseInt errors on both, which is
                   // why it rejected them and this did not. Same defect the
-                  // engine had at its own \x / \u sites.
+                  // engine had at its own \x / \u sites. Both digits are
+                  // read first, through the window's end if need be.
+                  at(sI + 1)
                   const xs = src.substring(sI, sI + 2)
                   let cc = /^[0-9a-fA-F]{2}$/.test(xs) ? parseInt(xs, 16) : NaN
 
@@ -1016,7 +1085,7 @@ function makeTomlStringMatcher() {
                   let codePoint = ''
 
                   for (let i = 0; i < size; i++) {
-                    const char = src[(++cI, ++sI)]
+                    const char = at((++cI, ++sI))
 
                     if (sI >= srclen || !isHexadecimal(char)) {
                       return lex.bad('invalid_unicode', beginUnicode, sI)
@@ -1068,11 +1137,11 @@ function makeTomlStringMatcher() {
                     cI = 0
                   }
                   while (
-                    (' ' === src[sI + 1] && ++cI) ||
-                    ('\t' === src[sI + 1] && ++cI) ||
-                    ('\n' === src[sI + 1] && ((cI = 0), ++rI)) ||
-                    ('\r' === src[sI + 1] &&
-                      '\n' === src[sI + 2] &&
+                    (' ' === at(sI + 1) && ++cI) ||
+                    ('\t' === at(sI + 1) && ++cI) ||
+                    ('\n' === at(sI + 1) && ((cI = 0), ++rI)) ||
+                    ('\r' === at(sI + 1) &&
+                      '\n' === at(sI + 2) &&
                       ((cI = 0), ++sI, ++rI))
                   ) {
                     sI++
@@ -1163,12 +1232,28 @@ const isWhitespace = (char: string) => {
 // Default option values.
 Toml.defaults = {} as TomlOptions
 
+// Build a TOML parser whole: jsonic's base with the plugin installed, as
+// `new Tabnas().use(jsonic).use(Toml)` builds it, and with `lex.window`
+// declared, so that `tn.parseReader` reads a reader a window at a time
+// rather than whole (admin ADR-30). The plugin's own matchers, its strings,
+// its dates and times and the leading byte order mark, read the source
+// through the window and read on where a scan reaches its end; jsonic's
+// base cuts its tokens with the engine's own matchers; and no action reads
+// the source. The window is declared here, on the parser this package
+// makes whole, and not in `Toml`, which a host may install beneath matchers
+// of its own.
+function make(options: TomlOptions = {}): Tabnas {
+  const tn = new Tabnas().use(jsonic).use(Toml, options)
+  tn.options({ lex: { window: true } })
+  return tn
+}
+
 // VERSION is this package's version. It MUST equal package.json "version":
 // the release orchestrator rewrites both, and test/version.test.ts fails the
 // build if they drift. Mirrors `const VERSION` in go/toml.go.
 const VERSION = '0.5.20'
 
-export { Toml, VERSION }
+export { Toml, VERSION, make }
 
 export type { TomlOptions }
 

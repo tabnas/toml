@@ -19,12 +19,13 @@ only covers what is specific to this crate.
 | `translate/` | the crate's copies of `../tabnas.plugin.json` (as `manifest.json`) and `../alchemy/render.alc`, which a packaged crate needs; `tests/translate_test.rs` holds them to the files |
 | `tests/parity_test.rs` | every `../test/spec/*.tsv` fixture, discovered by listing |
 | `tests/toml_test.rs` | in-language behaviour: API, special floats, triple quotes, date kinds, BOM, error columns and rows, key conflicts, the depth guard, the canonical message templates, the embedded grammar, threads |
-| `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves |
+| `tests/toml_valid_test.rs` | the BurntSushi/toml-test corpus, both halves, whole and from a reader (`the_corpus_parses_the_same_from_a_reader`, with its `ENGINE_DEFECT` ledger) |
+| `tests/window_test.rs` | a parse from a reader: `make()` declares `lex.window` and the plugin does not, every fixture row from a reader under the engine's window and windows of a few characters, tokens longer than the window, a long document |
 | `tests/divergent_test.rs` | the divergence register, `rust` column |
 | `tests/translate_test.rs` | the translation parts: the render the embedded manifest names is the one `render_text()` embeds, the embed it names is the one `translate()` carries (none, for TOML), the manifest's shapes and loss lines, and every render definition named `toml-...` |
 | `tests/perf_test.rs` | `parse` reuses its instance; a parse, a dotted header and a dotted key take time in proportion to their length; a header and a key 5,000 segments deep; a key keeps rule depth constant over 10,000 segments |
 | `tests/version_test.rs` | Cargo.toml == `VERSION` == ts/package.json |
-| `tests/common/mod.rs` | shared helpers: spec dir, repo dir, value and failure conversion |
+| `tests/common/mod.rs` | shared helpers: spec dir, repo dir, value and failure conversion, and a parse from a reader (`Pieces`, `outcome`, `same_from_reader`) |
 | `README.md` | the crate front page, prose-gated; its `rust` fences are doctests of this crate |
 
 Crate `tabnas-toml`, library `tabnas_toml`. The engine (`tabnas`), the
@@ -450,15 +451,37 @@ script is not concurrency-safe: it removes a destination that is not a
 git checkout and then clones into it, so on a fresh checkout `toml_valid`
 and `toml_invalid` each saw the corpus absent, each launched it, and the
 loser's `git clone` exited 128 into the directory the winner had just
-made. A process-local guard is enough BECAUSE both callers are in this
-one integration-test binary, which the default harness runs as two
-threads of one process; add a caller in another `tests/*.rs`, or run the
+made. A process-local guard is enough BECAUSE its callers (those two and
+`the_corpus_parses_the_same_from_a_reader`) are in this one
+integration-test binary, which the default harness runs as threads of one
+process; add a caller in another `tests/*.rs`, or run the
 suite under a test-per-process runner, and only a lock on the
 destination serialises them.
 `the_corpus_is_fetched_once_however_many_tests_ask` is what measures it.
 
 The `rust` row of `../test/conformance.tsv` is EXACT, not a floor, for
 the reason that file's header gives. It reproduces the `ts` row.
+
+## A parse from a reader reads a window at a time
+
+`make_with` (and so `make`) declares `lex.window` after it installs the
+plugin, so `Tabnas::parse_reader` holds a window of the source rather
+than all of it; `plugin()` and `toml()` leave it off, since a host may
+install them beneath matchers of its own. In a windowed parse the
+lexer's calls read no further than the window's end, and
+`Context::source` is empty. So the string matcher calls
+`Lexer::fill(want)` before `Lexer::forward(want)`, and `forward` then
+answers fewer characters than it was asked for only at the source's end,
+as `Window::new` takes it to; the date and time matchers run their
+pattern over `Lexer::window()` in `captures_ahead`, filling until the
+pattern's reach (a failure within ten characters, a match at most six past
+its end) lies inside it; and the BOM matcher reads its one character
+through the window at scalar position 0, which is the source's.
+`tests/window_test.rs` and `the_corpus_parses_the_same_from_a_reader`
+hold every fixture row and corpus document to the same outcome from a
+reader under windows of 1, 3 and 64 characters; the root `AGENTS.md`
+says more, and why `valid/comment/nonascii` is a ledger entry
+(tabnas/parser#322).
 
 ## The docs are gated
 

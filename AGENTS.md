@@ -265,7 +265,9 @@ value-matcher factories are referenced explicitly by name.
   it runs before the `match` matcher at `1e6`) that emits a `#SP` — an
   IGNORE-set token — for a BOM at source index `0` only. A BOM anywhere
   else still errors. Go's counterpart is `registerBOMMatcher` in
-  `go/toml.go`.
+  `go/toml.go`. Index `0` is the source's: in a parse from a reader the
+  cursor counts from the window's start, so the matcher adds where the
+  window begins (see "A parse from a reader reads a window at a time").
 - **Railroad legend.** The plugin registers a human description for the
   `#ID` token via `config.modify` → `cfg.tokenDesc`, which
   `@tabnas/railroad` reads off the live config when drawing the diagram
@@ -308,8 +310,71 @@ the TS-only hooks natively, not by parsing less:
   runner asserts error **codes** too, via its `MatchError` hook, which
   compares the code and nothing else — there are no permitted divergences.
 - Public API: `Parse(src, opts...)` and `MakeJsonic(opts...)` in
-  `go/toml.go` (TS equivalent: `new Tabnas().use(jsonic).use(Toml)`).
+  `go/toml.go` (TS equivalent: `make()`, which builds
+  `new Tabnas().use(jsonic).use(Toml)` and declares the window, below).
   `TomlOptions` is an empty struct, reserved for future use.
+
+## A parse from a reader reads a window at a time
+
+Each runtime's whole-parser constructor declares `lex.window` (admin
+ADR-30): `make()` in TypeScript, `MakeJsonic()` in Go, `make()` and
+`make_with()` in Rust. These are the constructors dmog calls. A parse from
+a reader (`tn.parseReader`, `Tabnas.ParseReader`, `Tabnas::parse_reader`)
+then holds a window of the source rather than all of it, and a parse of a
+string is unchanged. The plugin itself (`Toml` in TypeScript, `plugin()`
+and `toml()` in Rust) leaves the option off, as jsonic's base does, since
+a host may install either beneath matchers of its own; Go has no exported
+plugin, and `apply` is internal.
+
+Every matcher the plugin installs reads the text only through the window:
+
+- **Strings.** The string matcher scans to its closing delimiter. Every
+  read goes through one helper (`at` in TypeScript, `has` in Go) that
+  fills the window (`lex.fill`, `Lex.Fill`) when the index reaches the
+  window's end, so the scan sees what the whole text holds. Rust fills the
+  lexer's window (`Lexer::fill`) before it copies the prefix its scan
+  reads (`Window` in `rs/src/strmatcher.rs`), which already doubled
+  whenever a scan read past it.
+- **Dates and times.** The patterns run over the window. Each fails within
+  its first ten characters, and a match reads at most six characters past
+  its end: a `+hh:mm` offset is given up at its last digit. `matchAhead`
+  (`captures_ahead` in Rust) fills until that reach lies inside the window
+  or the source ends, so `1979-05-27T07:3` at the window's edge is not
+  taken as a date alone.
+- **The byte order mark.** Only the source's own start may hold it. In
+  TypeScript and Go the cursor counts from the window's start while a
+  token is cut, so TypeScript tests `lex.lengthRead() - lex.src.length +
+  pnt.sI` and Go `atSourceStart` (no token consumed yet, `Ctx.VAbs == 0`),
+  as tabnas/xml does; Rust's positions are the source's.
+
+No action reads the source: the key-conflict and date-range errors are
+raised on tokens, and the engine takes an error's excerpt from the window.
+
+The proof is differential, in every runtime: `ts/test/window.test.ts`,
+`go/window_test.go`, `rs/tests/window_test.rs`, and
+`the_corpus_parses_the_same_from_a_reader` in `rs/tests/toml_valid_test.rs`.
+Every fixture row and every toml-test document, both halves, parsed whole
+and from a reader in pieces of 1, 3 and 64 bytes (and 4 KiB in Go), gives
+the same value and the same error code, position, row, column and token
+text. TypeScript and Rust also read under windows of a few characters
+(margin and block 1 and 1, 3 and 2, 64 and 64), so every matcher meets the
+window's edge. A reader refuses the nine `invalid/encoding` documents that
+are not UTF-8 as `unreadable`. Go's small-window hook is unexported, so Go
+proves the edge with tokens longer than its 64 KiB window, a document of
+2.7 MB, and `TestDateOffsetAcrossTheEdgeFromAReader`, whose fraction
+lengths put a date's offset across the window's end. Taking a matcher's
+fill out fails these tests in every runtime. The one-character fills (the
+string matcher's first read in Rust, the byte order mark everywhere) are
+the exception: the engine fills the window to its margin before every
+token, so that character is always there.
+
+One corpus document reads otherwise from a reader in Rust, for a defect of
+the engine's: `valid/comment/nonascii`, a comment alone with characters
+past ASCII, fails as `internal` under windows of one and two characters,
+where the engine's fill drops all the window holds and indexes past its
+byte offsets (tabnas/parser#322). It is the one entry of `ENGINE_DEFECT`
+in `rs/tests/toml_valid_test.rs`, which must still fail that way, so the
+engine's fix fails the test until the entry is deleted.
 
 ## The external conformance suite (BurntSushi/toml-test)
 
@@ -432,7 +497,8 @@ npm test               # node --test over dist-test/*.test.js
 
 `npm test` first runs `pretest` (`scripts/fetch-toml-test.sh`), then the
 `.tsv` fixtures (`toml-tsv.test.ts`), the toml-test conformance suite
-(`toml.test.ts` — both halves, never skips), and the README/doc example
+(`toml.test.ts` — both halves, never skips), the parse from a reader
+(`window.test.ts`, over the fixtures and the corpus), and the README/doc example
 harness (`doc-examples.test.ts`, which runs fenced `js` blocks containing
 `// =>` assertions). `npm run test-cov`
 produces `coverage/lcov.info`. There is **no CLI** in this package (no

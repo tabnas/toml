@@ -223,12 +223,22 @@ func Parse(src string, opts ...TomlOptions) (any, error) {
 	return defaultParser.Parse(src)
 }
 
-// MakeJsonic creates a Jsonic instance configured for TOML parsing.
+// MakeJsonic creates a Jsonic instance configured for TOML parsing:
+// jsonic's base (jsonic.Make) with the TOML grammar installed, and with
+// lex.window declared, so that Tabnas.ParseReader reads a reader a window
+// at a time rather than whole (admin ADR-30). The plugin's own matchers,
+// its strings, its dates and times and the leading byte order mark, read
+// the source through the window and read on where a scan reaches its end;
+// jsonic's base reads through it too (jsonic 0.7.11); and no action reads
+// the source. The window is declared here, on the parser this package
+// makes whole.
 func MakeJsonic(opts ...TomlOptions) *tabnas.Tabnas {
 	j := jsonic.Make()
 	if err := apply(j); err != nil {
 		panic("toml plugin: " + err.Error())
 	}
+	yes := true
+	j.SetOptions(tabnas.Options{Lex: &tabnas.LexOptions{Window: &yes}})
 	return j
 }
 
@@ -415,6 +425,11 @@ const bom = "\uFEFF"
 // which is in the IGNORE set, so the parser never sees it. Restricted to
 // source index 0, so a BOM anywhere else stays an error. Go counterpart
 // of the TS plugin's `bom` lex matcher.
+//
+// In a parse from a reader a window at a time (lex.window, admin ADR-30)
+// the cursor counts from the window's start, so a cursor at 0 is at the
+// source's start only where atSourceStart says so, and the mark is read
+// through the window.
 func registerBOMMatcher(j *tabnas.Tabnas) {
 	j.SetOptions(tabnas.Options{
 		Lex: &tabnas.LexOptions{
@@ -424,7 +439,11 @@ func registerBOMMatcher(j *tabnas.Tabnas) {
 					Make: func(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher {
 						return func(lex *tabnas.Lex, _ *tabnas.Rule) *tabnas.Token {
 							pnt := lex.Cursor()
-							if pnt.SI != 0 || !strings.HasPrefix(lex.Src, bom) {
+							if pnt.SI != 0 || !atSourceStart(lex) {
+								return nil
+							}
+							lex.Fill(len(bom))
+							if !strings.HasPrefix(lex.Window(), bom) {
 								return nil
 							}
 							tkn := lex.Token("#SP", tabnas.TinSP, nil, bom)
@@ -437,6 +456,18 @@ func registerBOMMatcher(j *tabnas.Tabnas) {
 			},
 		},
 	})
+}
+
+// atSourceStart reports whether a cursor at the start of the text the
+// lexer holds is at the source's start. In a parse of the whole text it
+// is. In a parse from a reader the cursor counts from the window's start,
+// and the window keeps the text from the oldest token the parser holds,
+// and from the end of the last one it does not ignore, so it begins at the
+// source's start until the parser has taken a token: one it then still
+// holds lies before a cursor at the window's start, and one it has
+// consumed is counted in Ctx.VAbs. (tabnas/xml's matcher asks the same.)
+func atSourceStart(lex *tabnas.Lex) bool {
+	return lex.Ctx == nil || lex.Ctx.VAbs == 0
 }
 
 // registerSpecialFloats adds TOML's +/- nan and +/- inf keyword values

@@ -96,9 +96,10 @@ fn read_conformance(runtime: &str) -> Conformance {
 /// conformance test that silently does not run reports a green tick that
 /// is a lie.
 ///
-/// AT MOST ONE FETCH RUNS. `toml_valid` and `toml_invalid` are the only
-/// two callers and they are in THIS integration-test binary, so the
-/// default harness runs them as two THREADS of one process: a
+/// AT MOST ONE FETCH RUNS. `toml_valid`, `toml_invalid` and
+/// `the_corpus_parses_the_same_from_a_reader` are the only callers and they
+/// are in THIS integration-test binary, so the default harness runs them
+/// as THREADS of one process: a
 /// process-local `OnceLock` is the whole guard they need, and a file lock
 /// would be answering a question this binary does not ask. Were a caller
 /// ever added in another `tests/*.rs`, or were the suite run under a
@@ -655,4 +656,80 @@ fn toml_invalid() {
          update that one file. A rejection that is really an internal panic does not count \
          as conformance."
     );
+}
+
+/// Corpus documents a parse from a reader reads otherwise than their text
+/// for a defect of the engine's, each with its issue. An entry must still
+/// be read otherwise, and only as the defect reads it, so a fix to the
+/// engine fails `the_corpus_parses_the_same_from_a_reader` until the line
+/// is deleted.
+///
+/// `valid/comment/nonascii` is a comment alone, with characters past
+/// ASCII: the parser holds no token at its end, and under the test's
+/// windows of one and two characters the engine's fill before a cut drops
+/// all the window holds, indexing its per-character byte offsets one past
+/// their end. The parse fails as `internal` (tabnas/parser#322, the Rust
+/// engine's alone).
+const ENGINE_DEFECT: &[(&str, &str)] = &[("valid/comment/nonascii", "tabnas/parser#322")];
+
+/// Both halves of the corpus parse the same from a reader
+/// (`Tabnas::parse_reader`, admin ADR-30) as from their text: every
+/// document, through the parser `make()` builds, which declares
+/// `lex.window`, in pieces of 1, 3 and 64 bytes, under windows of a few
+/// characters and the engine's own (`common::same_from_reader`), but for
+/// the entries of [`ENGINE_DEFECT`]. The nine documents of
+/// `invalid/encoding` that are not UTF-8 are read as bytes, which a reader
+/// refuses as `unreadable`, where a parse of the text has only the lossy
+/// decoding `read_source` makes of them.
+#[test]
+fn the_corpus_parses_the_same_from_a_reader() {
+    let parser = tabnas_toml::make();
+    let mut compared = 0;
+    let mut refused = 0;
+    let mut failures = Vec::new();
+    let halves = ["valid", "invalid"];
+    for (index, half) in halves.iter().enumerate() {
+        for (name, path) in corpus(half) {
+            let bytes = std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            let Ok(text) = std::str::from_utf8(&bytes) else {
+                refused += 1;
+                let read = common::outcome(parser.parse_reader(common::Pieces::new(&bytes, 3)));
+                if !read.starts_with("err unreadable ") {
+                    failures.push(format!(
+                        "{half}/{name}: from a reader {read}, not unreadable"
+                    ));
+                }
+                continue;
+            };
+            let at = format!("{half}/{name}");
+            let (n, found) = common::same_from_reader(&parser, &at, text);
+            compared += n;
+            if let Some((_, issue)) = ENGINE_DEFECT.iter().find(|(entry, _)| *entry == at) {
+                let as_the_defect =
+                    |f: &String| f.contains("reader: err internal") && f.contains("out of bounds");
+                if found.is_empty() || !found.iter().all(as_the_defect) {
+                    failures.push(format!(
+                        "{at}: registered for {issue}, but read from a reader {}",
+                        if found.is_empty() {
+                            "as from its text: delete its entry".to_string()
+                        } else {
+                            found.join("\n")
+                        }
+                    ));
+                }
+                continue;
+            }
+            failures.extend(found);
+        }
+        println!(
+            "window corpus: {} of {} halves ({}%), {compared} reader parses",
+            index + 1,
+            halves.len(),
+            (index + 1) * 100 / halves.len()
+        );
+    }
+    assert_eq!(9, refused, "documents that are not UTF-8");
+    assert!(compared > 9000, "{compared}");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

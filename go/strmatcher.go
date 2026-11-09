@@ -26,10 +26,26 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 		src := lex.Src
 		srcLen := len(src)
 
+		// has reports whether the source holds a byte at i. In a parse from
+		// a reader a window at a time (lex.window, admin ADR-30) src is the
+		// window's text and the cursor counts from the window's start, and
+		// a string may run past the window's end: a read there reads the
+		// source on (Lex.Fill) before it answers, so the scan sees what the
+		// whole text holds, and has reports false only past the source's
+		// end, as a whole text does. Every read of the scan asks here first.
+		has := func(i int) bool {
+			if i >= srcLen {
+				lex.Fill(i - pnt.SI + 1)
+				src = lex.Src
+				srcLen = len(src)
+			}
+			return i < srcLen
+		}
+
 		sI := pnt.SI
 		cI := pnt.CI
 		rI := pnt.RI
-		if sI >= srcLen {
+		if !has(sI) {
 			return nil
 		}
 
@@ -42,8 +58,8 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 		isMultiline := false
 
 		// Check for `"""` or `'''` opener.
-		if sI+1 < srcLen && src[sI+1] == delim {
-			if sI+2 >= srcLen || src[sI+2] != delim {
+		if has(sI+1) && src[sI+1] == delim {
+			if !has(sI+2) || src[sI+2] != delim {
 				// `""` or `''`: empty string.
 				pnt.SI = sI + 2
 				pnt.CI = cI + 2
@@ -63,7 +79,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 		// (tabnas/toml#85). The line feed a line-ending backslash trims,
 		// below, was consumed the same way. The Rust port hands the engine a
 		// count of characters and was right all along.
-		if isMultiline && sI+1 < srcLen && src[sI+1] == '\n' {
+		if isMultiline && has(sI+1) && src[sI+1] == '\n' {
 			sI++
 			rI++
 			cI = 0
@@ -77,7 +93,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 		// a rune BOUNDARY, and this is where the next one starts.
 		runeEnd := sI
 
-		for sI < srcLen-1 {
+		for has(sI + 1) {
 			sI++
 			// COLUMNS ARE RUNES, NOT BYTES. `cI++` per byte charged a
 			// 2-byte é two columns and an astral character four, so every
@@ -117,11 +133,11 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 
 			case delim:
 				if isMultiline {
-					if sI+1 >= srcLen || src[sI+1] != delim {
+					if !has(sI+1) || src[sI+1] != delim {
 						b.WriteByte(delim)
 						continue
 					}
-					if sI+2 >= srcLen || src[sI+2] != delim {
+					if !has(sI+2) || src[sI+2] != delim {
 						b.WriteByte(delim)
 						b.WriteByte(delim)
 						sI++
@@ -133,12 +149,12 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 					cI += 2
 					// Optionally consume up to two trailing delimiters. Each
 					// belongs to the value and is a column of the source.
-					if sI+1 < srcLen && src[sI+1] == delim {
+					if has(sI+1) && src[sI+1] == delim {
 						b.WriteByte(delim)
 						sI++
 						cI++
 					}
-					if sI+1 < srcLen && src[sI+1] == delim {
+					if has(sI+1) && src[sI+1] == delim {
 						b.WriteByte(delim)
 						sI++
 						cI++
@@ -170,7 +186,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 				}
 				sI++
 				cI++
-				if sI >= srcLen {
+				if !has(sI) {
 					return lex.Bad("unterminated_string")
 				}
 				esc := src[sI]
@@ -180,7 +196,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 				}
 				switch esc {
 				case 'x':
-					if sI+2 >= srcLen {
+					if !has(sI + 2) {
 						return lex.Bad("invalid_ascii")
 					}
 					cc, err := strconv.ParseInt(src[sI+1:sI+3], 16, 32)
@@ -195,7 +211,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 					if esc == 'U' {
 						size = 8
 					}
-					if sI+size >= srcLen {
+					if !has(sI + size) {
 						return lex.Bad("invalid_unicode")
 					}
 					hex := src[sI+1 : sI+1+size]
@@ -231,7 +247,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 							rI++
 							cI = 0
 						}
-						for sI+1 < srcLen {
+						for has(sI + 1) {
 							n := src[sI+1]
 							switch n {
 							case ' ', '\t':
@@ -242,7 +258,7 @@ func tomlStringMatcher(_ *tabnas.LexConfig, _ *tabnas.Options) tabnas.LexMatcher
 								rI++
 								cI = 0
 							case '\r':
-								if sI+2 < srcLen && src[sI+2] == '\n' {
+								if has(sI+2) && src[sI+2] == '\n' {
 									sI += 2
 									rI++
 									cI = 0

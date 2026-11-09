@@ -2,8 +2,9 @@
 
 // Machine-INDEPENDENT performance regression guard.
 //
-// @tabnas/toml exports only the `Toml` plugin — there is NO package-level
-// convenience parse to cache (callers build their own engine via
+// @tabnas/toml exports the `Toml` plugin and `make()`, which builds a fresh
+// engine on every call — there is NO package-level convenience parse to
+// cache (callers build their own engine via `make()` or
 // `new Tabnas().use(jsonic).use(Toml)`). The thing that must stay fast is
 // REUSING that one built instance across many parses: building the (expensive)
 // TOML grammar dominates a parse, so rebuilding the engine per call is many
