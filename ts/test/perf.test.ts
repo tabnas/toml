@@ -209,7 +209,7 @@ test('a long dotted header builds every table it names', () => {
     () => toml.parse(`${src}[${path}.x.q]\n`),
     (error: any) =>
       'toml_key_conflict' === error.code &&
-      error.message.includes('cannot define x, it already has the value 1'),
+      error.message.includes('cannot define x, it is already defined'),
   )
 })
 
@@ -325,6 +325,6 @@ test('a long dotted key builds every table it names', () => {
     () => toml.parse(`${src}${path}.q = 4\n`),
     (error: any) =>
       'toml_key_conflict' === error.code &&
-      error.message.includes(`cannot define k${depth - 1}, it already has the value 1`),
+      error.message.includes(`cannot define k${depth - 1}, it is already defined`),
   )
 })

@@ -211,7 +211,7 @@ func TestLongDottedHeaderValue(t *testing.T) {
 	if !errors.As(err, &te) || te.Code != "toml_key_conflict" {
 		t.Fatalf("x holds a value, so it is not a table to add to; got %v", err)
 	}
-	if want := "cannot define x, it already has the value 1"; !strings.Contains(te.Detail, want) {
+	if want := "cannot define x, it is already defined"; !strings.Contains(te.Detail, want) {
 		t.Errorf("the refusal says %q, want %q", te.Detail, want)
 	}
 }
@@ -346,7 +346,7 @@ func TestLongDottedKeyValue(t *testing.T) {
 	if !errors.As(err, &te) || te.Code != "toml_key_conflict" {
 		t.Fatalf("the last segment holds a value, so it is not a table to add to; got %v", err)
 	}
-	if want := fmt.Sprintf("cannot define k%d, it already has the value 1", depth-1); !strings.Contains(te.Detail, want) {
+	if want := fmt.Sprintf("cannot define k%d, it is already defined", depth-1); !strings.Contains(te.Detail, want) {
 		t.Errorf("the refusal says %q, want %q", te.Detail, want)
 	}
 }

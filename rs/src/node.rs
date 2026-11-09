@@ -337,16 +337,19 @@ fn conflict(key: &str, why: &str) -> ActionError {
     ActionError::new("toml_key_conflict", format!("cannot define {key}, {why}"))
 }
 
-fn describe(value: &Value) -> String {
-    format!("it already has the value {}", value.to_json())
-}
+/// What a key conflict says the key already is, in the canonical port's
+/// words. It names no earlier value: that value is in the tree the parse
+/// builds, which a host streaming the document may empty behind the stream
+/// (transduce's `ParserEventSource::prune`), so a message quoting it would
+/// depend on whether the tree was pruned.
+pub(crate) const ALREADY_DEFINED: &str = "it is already defined";
 
-/// The refusal to give `key` a second value when it already holds
-/// `existing`: `a = 1` then `a = 2`, `a.b = 1` then `a.b = 2`,
-/// `{b = 1, b = 2}`. TOML allows a key one value, and the base grammar's
-/// duplicate-key rule (last wins, tables merged) is not it.
-pub(crate) fn redefined(key: &str, existing: &Value) -> ActionError {
-    conflict(key, &describe(existing))
+/// The refusal to give `key` a second value when it already holds one:
+/// `a = 1` then `a = 2`, `a.b = 1` then `a.b = 2`, `{b = 1, b = 2}`, and
+/// `[[a]]` where `a` is a scalar. TOML allows a key one value, and the base
+/// grammar's duplicate-key rule (last wins, tables merged) is not it.
+pub(crate) fn redefined(key: &str) -> ActionError {
+    conflict(key, ALREADY_DEFINED)
 }
 
 /// The value under `key` in the table at `path`, when the table has one.
@@ -585,15 +588,6 @@ impl Cursor {
         self.path
     }
 
-    /// The value at the cursor, as reading the tree there finds it.
-    pub(crate) fn value(&self) -> Value {
-        match &self.here {
-            Here::Node(node) => node.clone(),
-            Here::Fresh(fresh) => fresh.empty(),
-            Here::Absent => Value::Undefined,
-        }
-    }
-
     /// The canonical `Array.isArray(node)`.
     pub(crate) fn is_list(&self) -> bool {
         matches!(
@@ -732,7 +726,7 @@ impl Cursor {
                 self.enter(context, key);
                 Ok(())
             }
-            Some(other) => Err(conflict(key, &describe(other))),
+            Some(_) => Err(redefined(key)),
         }
     }
 
@@ -748,7 +742,7 @@ impl Cursor {
                 self.create(context, Value::String(key.to_string()), Fresh::Array);
                 Ok(())
             }
-            Some(other) => Err(conflict(key, &describe(other))),
+            Some(_) => Err(redefined(key)),
         }
     }
 

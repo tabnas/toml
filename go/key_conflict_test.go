@@ -39,23 +39,23 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 	}{
 		// A value used again as a table, through a dotted key in an inline
 		// table and through a header.
-		{"a = {b = 1, b.c = 2}", "cannot define b, it already has the value 1", "1:13"},
-		{`a = {b = "s", b.c = 2}`, `cannot define b, it already has the value "s"`, "1:15"},
-		{"a = 1\n[a]\nb = 2", "cannot define a, it already has the value 1", "2:2"},
-		{"a = 1\n[a.b]\nc = 2", "cannot define a, it already has the value 1", "2:2"},
-		{"a = 1\n[a.b.c]\nd = 2", "cannot define a, it already has the value 1", "2:2"},
-		{"[a]\nb = 1\n[a.b]\nc = 2", "cannot define b, it already has the value 1", "3:4"},
-		{"[a]\nb = 1\n[a.b.c]\nd = 2", "cannot define b, it already has the value 1", "3:4"},
-		{"[t]\na = 1\n[t.a]\nb = 2", "cannot define a, it already has the value 1", "3:4"},
+		{"a = {b = 1, b.c = 2}", "cannot define b, it is already defined", "1:13"},
+		{`a = {b = "s", b.c = 2}`, `cannot define b, it is already defined`, "1:15"},
+		{"a = 1\n[a]\nb = 2", "cannot define a, it is already defined", "2:2"},
+		{"a = 1\n[a.b]\nc = 2", "cannot define a, it is already defined", "2:2"},
+		{"a = 1\n[a.b.c]\nd = 2", "cannot define a, it is already defined", "2:2"},
+		{"[a]\nb = 1\n[a.b]\nc = 2", "cannot define b, it is already defined", "3:4"},
+		{"[a]\nb = 1\n[a.b.c]\nd = 2", "cannot define b, it is already defined", "3:4"},
+		{"[t]\na = 1\n[t.a]\nb = 2", "cannot define a, it is already defined", "3:4"},
 
 		// A value used again as a table-array header.
-		{"a = 1\n[[a]]\nb = 2", "cannot define a, it already has the value 1", "2:3"},
-		{"a = 1\n[[a.b]]\nc = 2", "cannot define a, it already has the value 1", "2:3"},
-		{"[a]\nb = 1\n[[a.b]]\nc = 2", "cannot define b, it already has the value 1", "3:5"},
-		{"[[a]]\nb = 1\n[[a.b]]\nc = 2", "cannot define b, it already has the value 1", "3:5"},
+		{"a = 1\n[[a]]\nb = 2", "cannot define a, it is already defined", "2:3"},
+		{"a = 1\n[[a.b]]\nc = 2", "cannot define a, it is already defined", "2:3"},
+		{"[a]\nb = 1\n[[a.b]]\nc = 2", "cannot define b, it is already defined", "3:5"},
+		{"[[a]]\nb = 1\n[[a.b]]\nc = 2", "cannot define b, it is already defined", "3:5"},
 
 		// A table redefined as an array of tables.
-		{"[a]\n[[a]]", "cannot define a, it already has the value {}", "2:3"},
+		{"[a]\n[[a]]", "cannot define a, it is already defined", "2:3"},
 
 		// An array of tables redefined as a table. These never crashed
 		// anywhere: both older ports accepted them and destroyed data, in
@@ -71,15 +71,15 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 		// dotted key, and a key in an inline table. The base grammar's
 		// answer to a repeated key, last wins and tables merged, is not
 		// TOML's. Raised on the key's own token.
-		{"a = 1\na = 2", "cannot define a, it already has the value 1", "2:1"},
+		{"a = 1\na = 2", "cannot define a, it is already defined", "2:1"},
 		// A quoted key's token sits after its closing quote, in every port.
-		{"a = 1\n\"a\" = 2", "cannot define a, it already has the value 1", "2:4"},
-		{"tbl = {k = 1}\ntbl = {kk = 2}", "cannot define tbl, it already has the value {\"k\":1}", "2:1"},
-		{"a.b = 1\na.b = 2", "cannot define b, it already has the value 1", "2:3"},
-		{"a.b.c = 1\na.b = 2", "cannot define b, it already has the value {\"c\":1}", "2:3"},
-		{"[t]\na = 1\na = 2", "cannot define a, it already has the value 1", "3:1"},
-		{"a = {b = 1, b = 2}", "cannot define b, it already has the value 1", "1:13"},
-		{"a = {b.c = 1, b.c = 2}", "cannot define c, it already has the value 1", "1:17"},
+		{"a = 1\n\"a\" = 2", "cannot define a, it is already defined", "2:4"},
+		{"tbl = {k = 1}\ntbl = {kk = 2}", "cannot define tbl, it is already defined", "2:1"},
+		{"a.b = 1\na.b = 2", "cannot define b, it is already defined", "2:3"},
+		{"a.b.c = 1\na.b = 2", "cannot define b, it is already defined", "2:3"},
+		{"[t]\na = 1\na = 2", "cannot define a, it is already defined", "3:1"},
+		{"a = {b = 1, b = 2}", "cannot define b, it is already defined", "1:13"},
+		{"a = {b.c = 1, b.c = 2}", "cannot define c, it is already defined", "1:17"},
 
 		// A header written twice, and a header for a table a dotted key
 		// or an inline table had defined. A header may define the table
@@ -99,13 +99,13 @@ func TestKeyConflictIsDiagnosed(t *testing.T) {
 		// them, so the refusal points at the key. The last row is a dotted
 		// key walking `x.a`, the table `[x.a.b]`'s prefix created, which
 		// a later `[x.a]` used to define.
-		{"[a.b]\nc = 1\n[a]\nb = 2", `cannot define b, it already has the value {"c":1}`, "4:1"},
-		{"[a.b]\nc = 1\n[a]\nb.d = 2", `cannot define b, it already has the value {"c":1}`, "4:1"},
-		{"[a.b.c]\nz = 9\n[a]\nb.c.t = 1", `cannot define b, it already has the value {"c":{"z":9}}`, "4:1"},
-		{"[a.b.c]\n[a]\n\"b\" = 1", `cannot define b, it already has the value {"c":{}}`, "3:4"},
-		{"[[a.b]]\n[a]\nb = 2", "cannot define b, it already has the value [{}]", "3:1"},
-		{"[[a.b]]\n[a]\nb.y = 2", "cannot define b, it already has the value [{}]", "3:1"},
-		{"[x.a.b]\n[x]\na.c = 1\n[x.a]", `cannot define a, it already has the value {"b":{}}`, "3:1"},
+		{"[a.b]\nc = 1\n[a]\nb = 2", `cannot define b, it is already defined`, "4:1"},
+		{"[a.b]\nc = 1\n[a]\nb.d = 2", `cannot define b, it is already defined`, "4:1"},
+		{"[a.b.c]\nz = 9\n[a]\nb.c.t = 1", `cannot define b, it is already defined`, "4:1"},
+		{"[a.b.c]\n[a]\n\"b\" = 1", `cannot define b, it is already defined`, "3:4"},
+		{"[[a.b]]\n[a]\nb = 2", "cannot define b, it is already defined", "3:1"},
+		{"[[a.b]]\n[a]\nb.y = 2", "cannot define b, it is already defined", "3:1"},
+		{"[x.a.b]\n[x]\na.c = 1\n[x.a]", `cannot define a, it is already defined`, "3:1"},
 	}
 
 	for _, c := range cases {

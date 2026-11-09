@@ -657,7 +657,7 @@ fn key_conflicts_are_diagnosed() {
     for (src, detail, at) in [
         (
             "a = 1\n[a.b]\nc = 2",
-            "cannot define a, it already has the value 1",
+            "cannot define a, it is already defined",
             "2:2",
         ),
         (
@@ -667,22 +667,22 @@ fn key_conflicts_are_diagnosed() {
         ),
         (
             "a = 1\n[[a]]\nx = 1",
-            "cannot define a, it already has the value 1",
+            "cannot define a, it is already defined",
             "2:3",
         ),
         (
             "a = 1\na = 2",
-            "cannot define a, it already has the value 1",
+            "cannot define a, it is already defined",
             "2:1",
         ),
         (
             "a.b = 1\na.b = 2",
-            "cannot define b, it already has the value 1",
+            "cannot define b, it is already defined",
             "2:3",
         ),
         (
             "a = {b = 1, b = 2}",
-            "cannot define b, it already has the value 1",
+            "cannot define b, it is already defined",
             "1:13",
         ),
         ("[a]\n[a]", "cannot define a, it is already defined", "2:2"),
@@ -703,17 +703,17 @@ fn key_conflicts_are_diagnosed() {
         ),
         (
             "[a.b]\nc = 1\n[a]\nb = 2",
-            r#"cannot define b, it already has the value {"c":1}"#,
+            r#"cannot define b, it is already defined"#,
             "4:1",
         ),
         (
             "[a.b.c]\nz = 1\n[a]\nb.c.t = 2",
-            r#"cannot define b, it already has the value {"c":{"z":1}}"#,
+            r#"cannot define b, it is already defined"#,
             "4:1",
         ),
         (
             "[[a.b]]\n[a]\nb.y = 2",
-            "cannot define b, it already has the value [{}]",
+            "cannot define b, it is already defined",
             "3:1",
         ),
         // A dotted key walking `x.a`, which `[x.a.b]`'s prefix created. The
@@ -721,7 +721,7 @@ fn key_conflicts_are_diagnosed() {
         // `[x.a.b]` left after the body had replaced the table at `x.a`.
         (
             "[x.a.b]\n[x]\na.c = 1\n[x.a]",
-            r#"cannot define a, it already has the value {"b":{}}"#,
+            r#"cannot define a, it is already defined"#,
             "3:1",
         ),
     ] {
