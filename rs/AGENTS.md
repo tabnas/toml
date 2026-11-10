@@ -150,6 +150,19 @@ two ports, handed `r.prev.node` by reference, take milliseconds
   a body replaced kept the old table's mark; the merge only adds keys now,
   because `body_conflict` in `refs.rs` refuses a key at the top of a body
   that the table already holds.
+- **Neither registry grows with the document** (tabnas/toml#121). Each
+  header's paths start from the document's root, which needs no buffer,
+  and nothing reads a path an earlier header made, so the first segment of
+  a header lets go of every path buffer (`reset_paths`; not while a cursor
+  is parked, since a parked cursor holds a path). And no header or key
+  reaches an element of an array of tables but the last, so `[[x]]`,
+  adding an element, forgets the trie's entries for the element before it
+  and everything below it (`release_trie`, which follows each node's
+  children's keys, `toml_trie_children`). Trie numbers come from a counter
+  (`toml_trie_next`), so a forgotten node never lends its number to
+  another. A stream of 3,000 tables held a buffer and an entry for every
+  one of them before; now the bag holds the same handful at any length,
+  as the other two ports' sets, which hold only implicit tables, do.
 
 The document is the same, table for table and key for key, because each
 table is created in the same container, under the same key, in the same
@@ -304,6 +317,19 @@ clones the counters, so the next rule gets them. No table close alternate
 reads either counter, so nothing between the two phases can see the
 difference. The test that this still works is the `array-of-tables.tsv`
 fixture: without it, a second `[[a]]` never starts a new element.
+
+**An element of an array of tables closes as the table the tree holds.**
+A table rule's node is the document's cell, with the table's path beside
+it, so a source that empties the engine's tree behind its stream never met
+a table at a close pass, and kept every element of an array of tables to
+the document's end (tabnas/toml#121). `@table-bc`, once it has merged the
+body, makes an element's rule's node a cell over the table the tree holds,
+as the canonical grammar's table rule's node is that table. transduce's
+pruning then finds it in its array and empties the elements before it, the
+place each held kept, as it does in TypeScript. Nothing reads the closed
+rule's node as a cell: the next header's rules take their parent's
+(`@table-bo`). The handle shares the table until the rule is let go, so a
+later write into that element, `[x.y]` after `[[x]]`, copies it once.
 
 ## What the grammar document needs before it is installed
 

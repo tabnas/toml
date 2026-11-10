@@ -662,15 +662,11 @@ fn toml_invalid() {
 /// for a defect of the engine's, each with its issue. An entry must still
 /// be read otherwise, and only as the defect reads it, so a fix to the
 /// engine fails `the_corpus_parses_the_same_from_a_reader` until the line
-/// is deleted.
-///
-/// `valid/comment/nonascii` is a comment alone, with characters past
-/// ASCII: the parser holds no token at its end, and under the test's
-/// windows of one and two characters the engine's fill before a cut drops
-/// all the window holds, indexing its per-character byte offsets one past
-/// their end. The parse fails as `internal` (tabnas/parser#322, the Rust
-/// engine's alone).
-const ENGINE_DEFECT: &[(&str, &str)] = &[("valid/comment/nonascii", "tabnas/parser#322")];
+/// is deleted. None is registered: `valid/comment/nonascii`, a comment
+/// alone with characters past ASCII, failed as `internal` under windows of
+/// one and two characters until the engine's fix (tabnas/parser#322, in
+/// 0.12.17).
+const ENGINE_DEFECT: &[(&str, &str)] = &[];
 
 /// Both halves of the corpus parse the same from a reader
 /// (`Tabnas::parse_reader`, admin ADR-30) as from their text: every
