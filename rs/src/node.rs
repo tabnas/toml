@@ -73,6 +73,16 @@ const PARKED_KEY: &str = "toml_parked";
 /// on the value a reader gets back.
 const IMPLICIT_KEY: &str = "toml_implicit";
 
+/// Where the parse keeps the number the trie's next node takes, in the
+/// context's `u` bag. Numbers only ever grow, so a node released with the
+/// table it stood for ([`release_trie`]) never lends its number to another.
+const TRIE_NEXT_KEY: &str = "toml_trie_next";
+
+/// Where the parse keeps, for each node of the trie, the keys of its
+/// children's entries, in the context's `u` bag: what [`release_trie`]
+/// follows to forget a table's positions with the table.
+const TRIE_CHILDREN_KEY: &str = "toml_trie_children";
+
 /// Where the parse keeps the address of the document's own cell, in the
 /// context's `u` bag. A header's prefix marks tables in that tree only. A
 /// table body or an inline table is a cell of its own, whose paths are
@@ -154,6 +164,23 @@ fn buffers_mut(context: &mut Context) -> &mut Vec<Value> {
     match context.u.get_mut(PATHS_KEY) {
         Some(Value::Array(buffers)) => Arc::make_mut(buffers),
         _ => unreachable!("the path registry was installed just above"),
+    }
+}
+
+/// Let go of every path buffer, as a header begins at the top of the
+/// document. Each header's paths start from the document's root, which
+/// needs no buffer, and nothing reads a path an earlier header made: a
+/// header's first segment starts from its parent's path, the root, a later
+/// segment from the segment before it, and a body from its own table's. So
+/// the registry would otherwise keep a buffer for every table of the
+/// document to its end (tabnas/toml#121). A parked cursor holds a path, so
+/// while one waits nothing is let go.
+pub(crate) fn reset_paths(context: &mut Context) {
+    if matches!(context.u.get(PARKED_KEY), Some(Value::Array(stack)) if !stack.is_empty()) {
+        return;
+    }
+    if let Some(Value::Array(buffers)) = context.u.get_mut(PATHS_KEY) {
+        Arc::make_mut(buffers).clear();
     }
 }
 
@@ -284,6 +311,12 @@ pub(crate) fn write_at(context: &mut Context, cell: &Cell, path: Path, key: Stri
     write(cell, segments(context, path), &Value::String(key), value);
 }
 
+/// The value at `path` in `cell`'s tree, a handle on the node the tree
+/// holds.
+pub(crate) fn value_at(context: &Context, cell: &Cell, path: Path) -> Option<Value> {
+    at(&cell.borrow(), segments(context, path)).cloned()
+}
+
 /// Copy every entry of `source` into the map at `path`, the write
 /// `Object.assign(r.node, r.child.node)` makes in the canonical grammar.
 pub(crate) fn merge_into(context: &mut Context, cell: &Cell, path: Path, source: &Value) {
@@ -396,23 +429,89 @@ fn trie_key(parent: usize, segment: &Value) -> String {
     }
 }
 
+/// The children's keys of every node of the trie (see [`TRIE_CHILDREN_KEY`]),
+/// installed on first use. Nothing else holds a handle on it, so
+/// `Arc::make_mut` here never copies.
+fn trie_children_mut(context: &mut Context) -> &mut IndexMap<String, Value> {
+    if !matches!(context.u.get(TRIE_CHILDREN_KEY), Some(Value::Object(_))) {
+        context.u.insert(
+            TRIE_CHILDREN_KEY.to_string(),
+            Value::Object(Arc::new(IndexMap::new())),
+        );
+    }
+    match context.u.get_mut(TRIE_CHILDREN_KEY) {
+        Some(Value::Object(children)) => Arc::make_mut(children),
+        _ => unreachable!("the children's keys were installed just above"),
+    }
+}
+
+/// A number for a new node of the trie: 1, 2, 3 and on, the root being 0.
+fn next_trie_number(context: &mut Context) -> usize {
+    let id = count(context.u.get(TRIE_NEXT_KEY)).unwrap_or(1).max(1);
+    context.u.insert(TRIE_NEXT_KEY.to_string(), number(id + 1));
+    id
+}
+
 /// The entry for `segment` under trie node `parent`, made (and not
 /// implicit) when missing: the child's number, and whether the table there
 /// is implicit.
 fn trie_entry(context: &mut Context, parent: usize, segment: &Value) -> (usize, bool) {
     let key = trie_key(parent, segment);
-    let trie = trie_mut(context);
-    if let Some(Value::Array(entry)) = trie.get(&key) {
+    if let Some(Value::Array(entry)) = trie_mut(context).get(&key) {
         if let Some(id) = count(entry.first()) {
             return (id, matches!(entry.get(1), Some(Value::Bool(true))));
         }
     }
-    let id = trie.len() + 1;
-    trie.insert(
-        key,
+    let id = next_trie_number(context);
+    trie_mut(context).insert(
+        key.clone(),
         Value::Array(Arc::new(vec![number(id), Value::Bool(false)])),
     );
+    match trie_children_mut(context)
+        .entry(parent.to_string())
+        .or_insert_with(|| Value::Array(Arc::new(Vec::new())))
+    {
+        Value::Array(children) => Arc::make_mut(children).push(Value::String(key)),
+        other => *other = Value::Array(Arc::new(vec![Value::String(key)])),
+    }
     (id, false)
+}
+
+/// Forget the table at `segment` under trie node `parent`, and every
+/// position below it: an element of an array of tables once the header
+/// `[[...]]` has added the element after it. No header or key reaches an
+/// element but the last, so nothing reads the entries again, and without
+/// this the trie would keep one for every table of the document to its end
+/// (tabnas/toml#121), where the TypeScript and Go ports keep only the
+/// implicit tables, which the tables' own lifetimes bound.
+fn release_trie(context: &mut Context, parent: usize, segment: &Value) {
+    let key = trie_key(parent, segment);
+    if let Some(Value::Array(siblings)) = trie_children_mut(context).get_mut(&parent.to_string()) {
+        let siblings = Arc::make_mut(siblings);
+        if let Some(at) = siblings
+            .iter()
+            .rposition(|sibling| matches!(sibling, Value::String(sibling) if *sibling == key))
+        {
+            siblings.remove(at);
+        }
+    }
+    let mut pending = vec![key];
+    while let Some(key) = pending.pop() {
+        let Some(Value::Array(entry)) = trie_mut(context).swap_remove(&key) else {
+            continue;
+        };
+        let Some(id) = count(entry.first()) else {
+            continue;
+        };
+        if let Some(Value::Array(children)) =
+            trie_children_mut(context).swap_remove(&id.to_string())
+        {
+            pending.extend(children.iter().filter_map(|child| match child {
+                Value::String(child) => Some(child.clone()),
+                _ => None,
+            }));
+        }
+    }
 }
 
 /// The trie node for `segment` under `parent`.
@@ -774,6 +873,10 @@ impl Cursor {
             Here::Node(Value::Array(list)) => list.len(),
             _ => 0,
         };
+        // The element before this one is out of every header's reach now.
+        if let Some(before) = index.checked_sub(1) {
+            release_trie(context, self.trie, &number(before));
+        }
         self.create(context, number(index), Fresh::Table);
     }
 

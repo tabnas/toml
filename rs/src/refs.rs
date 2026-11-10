@@ -13,8 +13,8 @@ use std::rc::Rc;
 use tabnas::{ActionError, Context, Rule, RuleSnapshot, Tabnas, Value};
 
 use crate::node::{
-    existing_at, merge_into, new_map, path_of, redefined, set_path, set_root, snapshot_path,
-    write_at, Cell, Cursor, Path, Reach,
+    existing_at, merge_into, new_map, path_of, redefined, reset_paths, set_path, set_root,
+    snapshot_path, value_at, write_at, Cell, Cursor, Path, Reach,
 };
 use crate::strmatcher::make_toml_string_matcher;
 use crate::values::{isodate_val, localtime_val};
@@ -229,6 +229,17 @@ fn register_state_actions(parser: &mut Tabnas) {
                 let source = child.node.borrow().clone();
                 merge_into(context, &cell_of(rule), path_of(rule), &source);
             }
+            // An element of an array of tables closes as the table the
+            // tree holds, as the canonical grammar's table rule's node is
+            // that table: a source that empties a tree behind its stream
+            // finds it in its array, and empties the elements before it
+            // (tabnas/toml#121). Nothing reads the closed rule's node as a
+            // cell: the next header's rules take their parent's.
+            if table_array(rule) {
+                if let Some(table) = value_at(context, &cell_of(rule), path_of(rule)) {
+                    rule.node = Rc::new(RefCell::new(table));
+                }
+            }
         }
 
         // The canonical `@table-ac` writes `next.n.table_dive = 0` on the
@@ -288,6 +299,7 @@ fn register_alt_actions(parser: &mut Tabnas) {
     parser.action_with_context("@table-dive-start", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
+        reset_paths(context);
         let mut cursor = Cursor::resume(context, &cell, parent_path(rule));
         let outcome = if table_array(rule) && cursor.has_list(&key) {
             cursor.enter(context, &key);
@@ -317,6 +329,7 @@ fn register_alt_actions(parser: &mut Tabnas) {
     parser.action_with_context("@table-key-cs-head", |rule, context| {
         let key = key_of(rule, context);
         let cell = cell_of(rule);
+        reset_paths(context);
         let array = table_array(rule);
         let mut cursor = Cursor::resume(context, &cell, parent_path(rule));
         let outcome = if array {
