@@ -179,10 +179,12 @@ func fixtureRows(t *testing.T, each func(at, input string)) {
 
 // withoutWindow is the parser MakeJsonic built before it declared the
 // window, and still builds but for that: jsonic's base with the grammar
-// installed.
+// installed. jsonic's base declares the window itself (tabnas/jsonic#121),
+// so it is turned off here.
 func withoutWindow(t *testing.T) *tabnas.Tabnas {
 	t.Helper()
-	j := jsonic.Make()
+	no := false
+	j := jsonic.Make(tabnas.Options{Lex: &tabnas.LexOptions{Window: &no}})
 	if err := apply(j); err != nil {
 		t.Fatal(err)
 	}

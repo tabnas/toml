@@ -49,8 +49,10 @@ fn fixture_rows() -> Vec<(String, String)> {
 
 /// The parser `make()` stands for: jsonic's base with the plugin
 /// installed, which dmog composed before `make()` declared the window.
+/// jsonic's base declares the window itself (tabnas/jsonic#121), so it is
+/// turned off here.
 fn composed() -> tabnas::Tabnas {
-    let mut parser = tabnas_jsonic::make();
+    let mut parser = tabnas_jsonic::make_with(|options| options.lex.window = false);
     parser
         .use_plugin(tabnas_toml::plugin(), None)
         .expect("the plugin installs");
@@ -63,7 +65,7 @@ fn make_declares_the_window() {
     // The plugin alone declares nothing, in either form: a host may
     // install it beneath matchers of its own.
     assert!(!composed().options.lex.window);
-    let mut parser = tabnas_jsonic::make();
+    let mut parser = tabnas_jsonic::make_with(|options| options.lex.window = false);
     tabnas_toml::toml(&mut parser).expect("the grammar installs");
     assert!(!parser.options.lex.window);
 }
